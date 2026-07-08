@@ -179,10 +179,10 @@ impl Vantage {
                 ))
             }
         };
-        let max_dim = params
-            .max_dimension
-            .unwrap_or(DEFAULT_MAX_DIMENSION)
-            .min(DEFAULT_MAX_DIMENSION);
+        let max_dim = match params.max_dimension {
+            None | Some(0) => DEFAULT_MAX_DIMENSION,
+            Some(n) => n.min(DEFAULT_MAX_DIMENSION),
+        };
         let bounds = params.bounds;
         let capturer = self.capturer.clone();
         let ocr = self.ocr.clone();
@@ -195,7 +195,7 @@ impl Vantage {
                 None
             };
             let image = if mode != Mode::Text {
-                Some(rgba_to_base64_png(&downscale(&frame, max_dim))?)
+                Some(rgba_to_base64_png(&downscale(&frame, max_dim)?)?)
             } else {
                 None
             };
@@ -261,6 +261,7 @@ impl ServerHandler for Vantage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
     use std::sync::Arc;
     use vantage_core::{
         Bounds, CaptureError, ClipboardContent, ClipboardPrefer, RgbaImage, WindowFilter, WindowId,
@@ -445,6 +446,57 @@ mod tests {
             .unwrap();
         assert_eq!(out.0.text.as_deref(), Some("hello"));
         assert!(out.0.image.is_none(), "text mode must not return pixels");
+    }
+
+    #[tokio::test]
+    async fn capture_region_treats_max_dimension_zero_as_default_cap() {
+        struct LargeFakeScreen;
+        impl ScreenCapturer for LargeFakeScreen {
+            fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
+                let width = 2000u32;
+                let height = 1500u32;
+                Ok(RgbaImage {
+                    width,
+                    height,
+                    pixels: vec![0u8; (width * height * 4) as usize],
+                })
+            }
+        }
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(LargeFakeScreen),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+        );
+        let out = vantage
+            .capture_region(Parameters(CaptureRegionParams {
+                bounds: Bounds {
+                    x: 0,
+                    y: 0,
+                    width: 2000,
+                    height: 1500,
+                },
+                output: Some("image".into()),
+                max_dimension: Some(0),
+            }))
+            .await
+            .unwrap();
+
+        assert!(
+            out.0.text.is_none(),
+            "pure image mode must not run OCR or return text"
+        );
+        let b64 = out.0.image.expect("image output must be present");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap();
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        let longest_side = decoded.width().max(decoded.height());
+        assert!(
+            longest_side <= DEFAULT_MAX_DIMENSION,
+            "max_dimension: 0 must be treated as the default cap ({DEFAULT_MAX_DIMENSION}), \
+             got longest side {longest_side}"
+        );
     }
 
     #[tokio::test]

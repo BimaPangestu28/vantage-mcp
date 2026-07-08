@@ -10,7 +10,7 @@
 //!   surfaced as [`CaptureError::AccessibilityPermissionDenied`].
 
 use accessibility::{AXAttribute, AXUIElement, Error as AxError};
-use accessibility_sys::{kAXErrorAPIDisabled, kAXErrorNotImplemented, pid_t, AXIsProcessTrusted};
+use accessibility_sys::{kAXErrorAPIDisabled, pid_t, AXIsProcessTrusted};
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::number::CFNumber;
@@ -256,12 +256,17 @@ fn locate_window_element(
 
 /// Maps an accessibility-crate error to a [`CaptureError`].
 ///
-/// `kAXErrorAPIDisabled`/`kAXErrorNotImplemented` mean the AX API is
-/// unavailable to this process (permission not granted); anything else is
-/// treated as the window no longer being resolvable.
+/// `kAXErrorAPIDisabled` means the AX API is unavailable to this process
+/// (permission not granted). Note that Apple's `AXError` enum has no distinct
+/// "not authorized" case — permission loss surfaces as `kAXErrorAPIDisabled`,
+/// and `AXIsProcessTrusted()` (checked before any AX call) is the primary
+/// signal. `kAXErrorNotImplemented` means the element/app simply doesn't
+/// implement the requested attribute — not a permission problem — so it falls
+/// through to the same "window no longer resolvable" bucket as every other
+/// non-permission error.
 fn map_ax_error(error: AxError, window_id: WindowId) -> CaptureError {
     match error {
-        AxError::Ax(code) if code == kAXErrorAPIDisabled || code == kAXErrorNotImplemented => {
+        AxError::Ax(code) if code == kAXErrorAPIDisabled => {
             CaptureError::AccessibilityPermissionDenied
         }
         _ => CaptureError::WindowNotFound(window_id),
