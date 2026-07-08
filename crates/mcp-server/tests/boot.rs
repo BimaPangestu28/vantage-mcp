@@ -66,8 +66,18 @@ fn initialize_handshake_and_clean_stdout() {
         "initialize must return a result"
     );
 
+    // The MCP handshake requires the client to send an `initialized`
+    // notification after the initialize response before issuing further
+    // requests. Skipping it leaves the server waiting and `tools/list`
+    // unanswered.
     {
         let stdin = child.stdin.as_mut().expect("stdin");
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        )
+        .expect("write initialized notification");
         writeln!(stdin, "{tools_list}").expect("write tools/list");
         stdin.flush().expect("flush");
     }
