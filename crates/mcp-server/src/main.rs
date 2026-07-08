@@ -3,23 +3,24 @@ mod handler;
 mod image_out;
 mod logging;
 
-use std::sync::Arc;
-
 use anyhow::Result;
 use rmcp::{transport::stdio, ServiceExt};
 
 use handler::Vantage;
+
+#[cfg(target_os = "linux")]
+use vantage_platform_linux as backend;
+#[cfg(target_os = "macos")]
 use vantage_platform_macos as backend;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+compile_error!("vantage-mcp supports macOS and Linux only");
 
 #[tokio::main]
 async fn main() -> Result<()> {
     logging::init();
     tracing::info!("vantage-mcp starting (stdio); logging on stderr only");
 
-    let windows = Arc::new(backend::MacWindowInspector::new());
-    let capturer = Arc::new(backend::MacScreenCapturer::new());
-    let ocr = Arc::new(backend::MacTextRecognizer::new());
-    let clipboard = Arc::new(backend::MacClipboard::new());
+    let (windows, capturer, ocr, clipboard) = backend::backends();
 
     let service = Vantage::new(windows, capturer, ocr, clipboard)
         .serve(stdio())

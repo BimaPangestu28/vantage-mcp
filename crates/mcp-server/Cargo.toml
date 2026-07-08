@@ -11,7 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 vantage-core = { path = "../core" }
-vantage-platform-macos = { path = "../platform/macos" }
 rmcp = { version = "2.1.0", features = ["server", "transport-io", "macros"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "signal"] }
 serde = { workspace = true }
@@ -22,3 +21,20 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 image = { workspace = true }
 base64 = { workspace = true }
+
+[features]
+# `capture`/`ocr` are ON by default so a normal build is fully functional. They
+# forward to the Linux backend's optional features (which need system libraries:
+# libwayland/xcb/pipewire for capture, libtesseract for OCR). Build with
+# `--no-default-features` to produce a server without those system-lib
+# requirements; the disabled backends return an actionable Unsupported error.
+# On macOS these features are inert (the macOS backend has no optional deps).
+default = ["capture", "ocr"]
+capture = ["vantage-platform-linux/capture"]
+ocr = ["vantage-platform-linux/ocr"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+vantage-platform-macos = { path = "../platform/macos" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+vantage-platform-linux = { path = "../platform/linux", default-features = false }

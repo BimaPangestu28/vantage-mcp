@@ -1,0 +1,31 @@
+[package]
+name = "vantage-platform-linux"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+vantage-core = { path = "../../core" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = "3"
+# AT-SPI over D-Bus. Use the tokio reactor (not the default async-std/async-io)
+# so the sync trait methods can drive calls on a private tokio runtime.
+atspi = { version = "0.26", default-features = false, features = ["tokio", "zbus"] }
+tokio = { version = "1", features = ["rt", "net", "time"] }
+# Capture (xcap) and OCR (tesseract) require system libraries at build time
+# (libwayland/xcb/pipewire/dbus for xcap; libtesseract/leptonica for tesseract).
+# They are optional features so the crate still builds in environments without
+# those libs; both are ON by default so a normal build has full functionality.
+xcap = { version = "0.9", optional = true }
+image = { workspace = true, optional = true }
+tesseract = { version = "0.15", optional = true }
+
+[features]
+default = ["capture", "ocr"]
+capture = ["dep:xcap", "dep:image"]
+ocr = ["dep:tesseract"]
+
+[dev-dependencies]
+image = { workspace = true }

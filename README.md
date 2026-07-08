@@ -8,8 +8,9 @@ capture a screen region as OCR'd text (or an image), and read the clipboard.
 It speaks MCP over stdio, so it can be registered with any MCP-capable agent
 (Claude Code, Claude Desktop, etc.) as a subprocess.
 
-This is a **Phase 0/1** build: macOS only, read-only. There are no "act"
-tools (no typing, clicking, or clipboard writes) — see [Roadmap](#roadmap).
+This build is **read-only** and runs on **macOS and Linux** (Linux covers both
+X11 and Wayland, detected at runtime). There are no "act" tools (no typing,
+clicking, or clipboard writes) — see [Roadmap](#roadmap).
 
 Every tool is **text-first by design**: `read_window_text` never returns
 pixels, and `capture_region` defaults to OCR text with no image payload. This
@@ -30,20 +31,31 @@ keeps token cost low for the common case; ask for `output: "image"` or
 
 ## Prerequisites
 
-- macOS 12.3 or later.
 - Rust 1.95 (pinned via `rust-toolchain.toml`).
-- Two macOS permissions granted **to whatever process launches this binary**
-  (your terminal, or the agent app itself if it spawns the process directly):
+
+**macOS** (12.3 or later): two permissions granted **to whatever process
+launches this binary** (your terminal, or the agent app itself if it spawns the
+process directly):
   - **Screen Recording** — required for `capture_region` and for window
     *titles* in `list_windows`. System Settings → Privacy & Security →
     Screen Recording.
   - **Accessibility** — required for `read_window_text`. System Settings →
     Privacy & Security → Accessibility.
 
-  Without these, the affected tools return an actionable MCP error naming
-  the missing permission and where to grant it — they do not hang or crash.
-  See [docs/agent-registration.md](docs/agent-registration.md) for the exact
-  steps and what the error looks like.
+**Linux** (X11 or Wayland):
+  - The **accessibility (AT-SPI) bus** must be enabled for `read_window_text`
+    and `list_windows` (on by default on GNOME/KDE).
+  - **Screen capture** for `capture_region`: on Wayland, approve the
+    `xdg-desktop-portal` prompt on first use; on X11 no prompt is shown.
+  - A full build needs system libraries for capture (xcap) and OCR (Tesseract);
+    see [docs/agent-registration.md](docs/agent-registration.md) for the exact
+    `apt` packages, or build with `--no-default-features` to skip them (those
+    two tools then return an actionable `Unsupported` error).
+
+On both platforms, a missing permission yields an actionable MCP error naming
+what to enable and where — the tools do not hang or crash. See
+[docs/agent-registration.md](docs/agent-registration.md) for the exact steps
+and what the error looks like.
 
 ## Build
 
@@ -51,7 +63,10 @@ keeps token cost low for the common case; ask for `output: "image"` or
 cargo build --release
 ```
 
-The binary is produced at `target/release/vantage-mcp`.
+The binary is produced at `target/release/vantage-mcp`. On Linux a full build
+needs the capture/OCR system libraries (see [Prerequisites](#prerequisites)); to
+build without them, use `cargo build --release --no-default-features` (capture
+and OCR then return an actionable `Unsupported` error, other tools work).
 
 ## Usage
 
@@ -107,18 +122,16 @@ isn't a JSON-RPC message, that's a bug: file an issue.
 
 ## Roadmap
 
-This build covers Phase 0 (skeleton) and Phase 1 (macOS MVP read slice) of
-the project plan. Later phases, not yet implemented:
+This build covers the read slice on **macOS and Linux** (Linux via AT-SPI for
+windows/text, xcap for capture on X11 and Wayland, Tesseract for OCR, arboard
+for clipboard). Later phases, not yet implemented:
 
-- **Linux/X11 backend** — window enumeration via EWMH/X11, accessibility
-  text via AT-SPI, OCR via Tesseract, mirroring the macOS capability set.
 - **Full image-output surface** — richer capture options (e.g. window-level
-  capture, multi-display listing) beyond the current region capture.
+  capture, multi-display listing) beyond the current region capture. *(Spec B)*
 - **Gated act tools** — clipboard write, type, click, focus — behind an
   explicit policy gate and disabled by default, kept structurally separate
-  from the read tools to avoid prompt-injection-driven side effects.
-- **Wayland backend** — portal-based capture (`xdg-desktop-portal`
-  ScreenCast) and input (libei InputCapture portal) for modern Linux
-  sessions.
+  from the read tools to avoid prompt-injection-driven side effects. On Linux
+  input would go via X11 XTEST / the Wayland libei InputCapture portal. *(Spec C)*
 
-See `PRD-desktop-capture-mcp.md` for the full product spec.
+See `PRD-desktop-capture-mcp.md` for the full product spec, and
+`docs/superpowers/specs/` for the per-slice design specs.
