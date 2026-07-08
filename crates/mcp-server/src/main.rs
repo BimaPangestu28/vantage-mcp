@@ -1,5 +1,6 @@
 mod error_map;
 mod handler;
+mod image_out;
 mod logging;
 mod stub_backends;
 

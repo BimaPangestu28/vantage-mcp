@@ -7,11 +7,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use vantage_core::{
-    ClipboardAccess, ScreenCapturer, TextRecognizer, WindowFilter, WindowInfo, WindowInspector,
-    WindowText,
+    Bounds, ClipboardAccess, ScreenCapturer, TextRecognizer, WindowFilter, WindowInfo,
+    WindowInspector, WindowText,
 };
 
 use crate::error_map::to_mcp_error;
+use crate::image_out::{downscale, rgba_to_base64_png, DEFAULT_MAX_DIMENSION};
 
 /// Default accessibility-tree walk depth for `read_window_text` when the
 /// caller omits `depth`.
@@ -39,6 +40,24 @@ pub struct ReadWindowTextParams {
     pub depth: Option<u32>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CaptureRegionParams {
+    pub bounds: Bounds,
+    /// "text" (default, OCR only, no pixels), "image", or "both".
+    #[serde(default)]
+    pub output: Option<String>,
+    /// Cap the largest image side. Defaults to 1024; always enforced.
+    #[serde(default)]
+    pub max_dimension: Option<u32>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CaptureOutput {
+    pub text: Option<String>,
+    /// base64-encoded PNG, present only when output includes an image.
+    pub image: Option<String>,
+}
+
 /// Object wrapper around the window list.
 ///
 /// The MCP spec requires a tool's `outputSchema` root to be an `object`, and
@@ -57,9 +76,7 @@ pub struct ListWindowsResult {
 #[derive(Clone)]
 pub struct Vantage {
     pub(crate) windows: Arc<dyn WindowInspector>,
-    #[allow(dead_code)]
     pub(crate) capturer: Arc<dyn ScreenCapturer>,
-    #[allow(dead_code)]
     pub(crate) ocr: Arc<dyn TextRecognizer>,
     #[allow(dead_code)]
     pub(crate) clipboard: Arc<dyn ClipboardAccess>,
@@ -121,6 +138,60 @@ impl Vantage {
                 .await
                 .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?;
         result.map(Json).map_err(to_mcp_error)
+    }
+
+    /// Capture a screen region. Defaults to output=text: runs OCR and returns
+    /// text only, no pixels (keeps token cost low). Use output=image/both when
+    /// visual layout matters; images are downscaled to max_dimension.
+    #[tool(description = "Capture a screen region; defaults to OCR text (no image).")]
+    pub async fn capture_region(
+        &self,
+        Parameters(params): Parameters<CaptureRegionParams>,
+    ) -> Result<Json<CaptureOutput>, ErrorData> {
+        #[derive(PartialEq)]
+        enum Mode {
+            Text,
+            Image,
+            Both,
+        }
+        let mode = match params.output.as_deref() {
+            None | Some("text") => Mode::Text,
+            Some("image") => Mode::Image,
+            Some("both") => Mode::Both,
+            Some(other) => {
+                return Err(ErrorData::invalid_params(
+                    format!("output must be \"text\", \"image\", or \"both\", got {other:?}"),
+                    None,
+                ))
+            }
+        };
+        let max_dim = params
+            .max_dimension
+            .unwrap_or(DEFAULT_MAX_DIMENSION)
+            .min(DEFAULT_MAX_DIMENSION);
+        let bounds = params.bounds;
+        let capturer = self.capturer.clone();
+        let ocr = self.ocr.clone();
+
+        let (text, image) = tokio::task::spawn_blocking(move || {
+            let frame = capturer.capture_region(bounds)?;
+            let text = if mode != Mode::Image {
+                Some(ocr.recognize(&frame)?)
+            } else {
+                None
+            };
+            let image = if mode != Mode::Text {
+                Some(rgba_to_base64_png(&downscale(&frame, max_dim))?)
+            } else {
+                None
+            };
+            Ok::<_, vantage_core::CaptureError>((text, image))
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+        .map_err(to_mcp_error)?;
+
+        Ok(Json(CaptureOutput { text, image }))
     }
 }
 
@@ -253,5 +324,37 @@ mod tests {
             .unwrap();
 
         assert_eq!(*spy.seen.lock().unwrap(), vec![DEFAULT_DEPTH, MAX_DEPTH]);
+    }
+
+    #[tokio::test]
+    async fn capture_region_text_mode_runs_ocr_and_returns_no_image() {
+        struct FakeScreen;
+        impl ScreenCapturer for FakeScreen {
+            fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
+                Ok(RgbaImage { width: 2, height: 2, pixels: vec![0u8; 16] })
+            }
+        }
+        struct FakeOcr;
+        impl TextRecognizer for FakeOcr {
+            fn recognize(&self, _i: &RgbaImage) -> Result<String, CaptureError> {
+                Ok("hello".into())
+            }
+        }
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(FakeScreen),
+            Arc::new(FakeOcr),
+            Arc::new(NoClip),
+        );
+        let out = vantage
+            .capture_region(Parameters(CaptureRegionParams {
+                bounds: Bounds { x: 0, y: 0, width: 2, height: 2 },
+                output: None,
+                max_dimension: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(out.0.text.as_deref(), Some("hello"));
+        assert!(out.0.image.is_none(), "text mode must not return pixels");
     }
 }
