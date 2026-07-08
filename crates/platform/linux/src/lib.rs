@@ -2,6 +2,10 @@
 //!
 //! Everything OS-specific is gated behind `#[cfg(target_os = "linux")]` so this
 //! crate compiles to an empty lib on non-Linux hosts (mirrors the macOS crate).
+//!
+//! `capture` (xcap) and `ocr` (tesseract) are optional features (both ON by
+//! default) because they need system libraries at build time. When a feature is
+//! off, a stub backend is used that returns an actionable `Unsupported` error.
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 
@@ -9,13 +13,23 @@ use std::sync::Arc;
 use vantage_core::{ClipboardAccess, ScreenCapturer, TextRecognizer, WindowInspector};
 
 #[cfg(target_os = "linux")]
-mod capture;
-#[cfg(target_os = "linux")]
 mod clipboard;
 #[cfg(target_os = "linux")]
-mod ocr;
-#[cfg(target_os = "linux")]
 mod windows;
+
+// Capture: real impl when `capture` is enabled, stub otherwise.
+#[cfg(all(target_os = "linux", feature = "capture"))]
+mod capture;
+#[cfg(all(target_os = "linux", not(feature = "capture")))]
+#[path = "capture_stub.rs"]
+mod capture;
+
+// OCR: real impl when `ocr` is enabled, stub otherwise.
+#[cfg(all(target_os = "linux", feature = "ocr"))]
+mod ocr;
+#[cfg(all(target_os = "linux", not(feature = "ocr")))]
+#[path = "ocr_stub.rs"]
+mod ocr;
 
 #[cfg(target_os = "linux")]
 pub use capture::LinuxScreenCapturer;

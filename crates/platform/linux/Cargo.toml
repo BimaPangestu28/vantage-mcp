@@ -10,3 +10,18 @@ vantage-core = { path = "../../core" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = "3"
+# Capture (xcap) and OCR (tesseract) require system libraries at build time
+# (libwayland/xcb/pipewire/dbus for xcap; libtesseract/leptonica for tesseract).
+# They are optional features so the crate still builds in environments without
+# those libs; both are ON by default so a normal build has full functionality.
+xcap = { version = "0.9", optional = true }
+image = { workspace = true, optional = true }
+tesseract = { version = "0.15", optional = true }
+
+[features]
+default = ["capture", "ocr"]
+capture = ["dep:xcap", "dep:image"]
+ocr = ["dep:tesseract"]
+
+[dev-dependencies]
+image = { workspace = true }
