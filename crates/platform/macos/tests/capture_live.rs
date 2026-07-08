@@ -11,7 +11,12 @@ use vantage_platform_macos::MacScreenCapturer;
 fn captures_a_small_region() {
     let capturer = MacScreenCapturer::new();
     let img = capturer
-        .capture_region(Bounds { x: 0, y: 0, width: 64, height: 64 })
+        .capture_region(Bounds {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 64,
+        })
         .expect("capture");
     // On a HiDPI/Retina display the returned image is at native pixel
     // resolution, i.e. `scale_factor()`x the requested 64x64-point region
@@ -20,6 +25,10 @@ fn captures_a_small_region() {
     // requested region and internally consistent, rather than pinning an
     // exact size.
     assert!(img.width >= 64, "expected width >= 64, got {}", img.width);
-    assert!(img.height >= 64, "expected height >= 64, got {}", img.height);
+    assert!(
+        img.height >= 64,
+        "expected height >= 64, got {}",
+        img.height
+    );
     assert_eq!(img.pixels.len(), (img.width * img.height * 4) as usize);
 }

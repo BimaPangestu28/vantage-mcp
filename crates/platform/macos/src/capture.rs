@@ -32,7 +32,10 @@ impl ScreenCapturer for MacScreenCapturer {
             .into_iter()
             .find(|m| {
                 let (mx, my) = (m.x().unwrap_or(0), m.y().unwrap_or(0));
-                let (mw, mh) = (m.width().unwrap_or(0) as i32, m.height().unwrap_or(0) as i32);
+                let (mw, mh) = (
+                    m.width().unwrap_or(0) as i32,
+                    m.height().unwrap_or(0) as i32,
+                );
                 bounds.x >= mx && bounds.y >= my && bounds.x < mx + mw && bounds.y < my + mh
             })
             .ok_or(CaptureError::InvalidBounds(bounds))?;
@@ -46,13 +49,19 @@ impl ScreenCapturer for MacScreenCapturer {
         // region (also in points, same Quartz space as window bounds) must be
         // scaled into pixel space before it is used to index the pixel buffer.
         let scale = monitor.scale_factor().unwrap_or(1.0);
-        let shot = monitor.capture_image().map_err(|e| classify_capture_error(&e))?; // image::RgbaImage
+        let shot = monitor
+            .capture_image()
+            .map_err(|e| classify_capture_error(&e))?; // image::RgbaImage
 
         let (px_x, px_y, crop_w, crop_h) =
             crop_rect(bounds, mx, my, scale, shot.width(), shot.height())
                 .ok_or(CaptureError::InvalidBounds(bounds))?;
         let cropped = image::imageops::crop_imm(&shot, px_x, px_y, crop_w, crop_h).to_image();
-        Ok(RgbaImage { width: crop_w, height: crop_h, pixels: cropped.into_raw() })
+        Ok(RgbaImage {
+            width: crop_w,
+            height: crop_h,
+            pixels: cropped.into_raw(),
+        })
     }
 }
 
@@ -81,7 +90,11 @@ fn crop_rect(
     }
     // Guard against a nonsensical scale factor (xcap failure fallback is
     // handled by the caller via `unwrap_or(1.0)`, but be defensive here too).
-    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
 
     // Region origin relative to the monitor, in points. A region whose
     // origin lies left of/above the monitor is clamped to the monitor's
@@ -145,7 +158,12 @@ mod tests {
     /// rectangle should equal the requested region unchanged.
     #[test]
     fn crop_rect_scale_1_basic_crop() {
-        let bounds = Bounds { x: 0, y: 0, width: 64, height: 64 };
+        let bounds = Bounds {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 64,
+        };
         let result = crop_rect(bounds, 0, 0, 1.0, 1920, 1080);
         assert_eq!(result, Some((0, 0, 64, 64)));
     }
@@ -156,7 +174,12 @@ mod tests {
     /// as pixel offsets, cropping the wrong (top-left-shifted) sub-region.
     #[test]
     fn crop_rect_scale_2_maps_region_and_offset() {
-        let bounds = Bounds { x: 10, y: 20, width: 64, height: 64 };
+        let bounds = Bounds {
+            x: 10,
+            y: 20,
+            width: 64,
+            height: 64,
+        };
         let result = crop_rect(bounds, 0, 0, 2.0, 3840, 2160);
         assert_eq!(result, Some((20, 40, 128, 128)));
     }
@@ -166,7 +189,12 @@ mod tests {
     /// before scaling, exercising the global -> local -> pixel translation.
     #[test]
     fn crop_rect_nonzero_monitor_origin() {
-        let bounds = Bounds { x: 1450, y: 20, width: 50, height: 60 };
+        let bounds = Bounds {
+            x: 1450,
+            y: 20,
+            width: 50,
+            height: 60,
+        };
         let result = crop_rect(bounds, 1440, 0, 1.0, 1920, 1080);
         assert_eq!(result, Some((10, 20, 50, 60)));
     }
@@ -176,7 +204,12 @@ mod tests {
     /// over-reading it.
     #[test]
     fn crop_rect_clamps_when_region_extends_past_shot() {
-        let bounds = Bounds { x: 90, y: 90, width: 50, height: 50 };
+        let bounds = Bounds {
+            x: 90,
+            y: 90,
+            width: 50,
+            height: 50,
+        };
         let result = crop_rect(bounds, 0, 0, 1.0, 100, 100);
         assert_eq!(result, Some((90, 90, 10, 10)));
     }
@@ -185,7 +218,12 @@ mod tests {
     /// rect overlapping the buffer only partially is clamped, not dropped.
     #[test]
     fn crop_rect_clamps_after_scaling() {
-        let bounds = Bounds { x: 40, y: 40, width: 40, height: 40 };
+        let bounds = Bounds {
+            x: 40,
+            y: 40,
+            width: 40,
+            height: 40,
+        };
         let result = crop_rect(bounds, 0, 0, 2.0, 100, 100);
         assert_eq!(result, Some((80, 80, 20, 20)));
     }
@@ -194,7 +232,12 @@ mod tests {
     /// yields an empty crop, which the caller maps to `InvalidBounds`.
     #[test]
     fn crop_rect_returns_none_when_entirely_outside_shot() {
-        let bounds = Bounds { x: 60, y: 60, width: 40, height: 40 };
+        let bounds = Bounds {
+            x: 60,
+            y: 60,
+            width: 40,
+            height: 40,
+        };
         let result = crop_rect(bounds, 0, 0, 2.0, 100, 100);
         assert_eq!(result, None);
     }
@@ -202,7 +245,12 @@ mod tests {
     /// Zero-size regions are rejected up front, independent of scale.
     #[test]
     fn crop_rect_rejects_zero_size_bounds() {
-        let bounds = Bounds { x: 0, y: 0, width: 0, height: 10 };
+        let bounds = Bounds {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 10,
+        };
         assert_eq!(crop_rect(bounds, 0, 0, 1.0, 100, 100), None);
     }
 
@@ -210,9 +258,23 @@ mod tests {
     /// to 1.0 rather than corrupting the crop math.
     #[test]
     fn crop_rect_falls_back_to_scale_1_on_invalid_scale() {
-        let bounds = Bounds { x: 0, y: 0, width: 64, height: 64 };
-        assert_eq!(crop_rect(bounds, 0, 0, f32::NAN, 1920, 1080), Some((0, 0, 64, 64)));
-        assert_eq!(crop_rect(bounds, 0, 0, 0.0, 1920, 1080), Some((0, 0, 64, 64)));
-        assert_eq!(crop_rect(bounds, 0, 0, -2.0, 1920, 1080), Some((0, 0, 64, 64)));
+        let bounds = Bounds {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 64,
+        };
+        assert_eq!(
+            crop_rect(bounds, 0, 0, f32::NAN, 1920, 1080),
+            Some((0, 0, 64, 64))
+        );
+        assert_eq!(
+            crop_rect(bounds, 0, 0, 0.0, 1920, 1080),
+            Some((0, 0, 64, 64))
+        );
+        assert_eq!(
+            crop_rect(bounds, 0, 0, -2.0, 1920, 1080),
+            Some((0, 0, 64, 64))
+        );
     }
 }

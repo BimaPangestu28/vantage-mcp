@@ -10,9 +10,7 @@
 //!   surfaced as [`CaptureError::AccessibilityPermissionDenied`].
 
 use accessibility::{AXAttribute, AXUIElement, Error as AxError};
-use accessibility_sys::{
-    kAXErrorAPIDisabled, kAXErrorNotImplemented, pid_t, AXIsProcessTrusted,
-};
+use accessibility_sys::{kAXErrorAPIDisabled, kAXErrorNotImplemented, pid_t, AXIsProcessTrusted};
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::number::CFNumber;
@@ -89,7 +87,11 @@ impl WindowInspector for MacWindowInspector {
         Ok(windows)
     }
 
-    fn read_window_text(&self, window_id: WindowId, depth: u32) -> Result<WindowText, CaptureError> {
+    fn read_window_text(
+        &self,
+        window_id: WindowId,
+        depth: u32,
+    ) -> Result<WindowText, CaptureError> {
         // A missing/false trust flag is the authoritative signal that
         // Accessibility permission has not been granted to this process.
         if !unsafe { AXIsProcessTrusted() } {
@@ -103,7 +105,10 @@ impl WindowInspector for MacWindowInspector {
         let mut walk = TextWalk::new();
         walk.visit(&window_element, depth);
 
-        Ok(WindowText { text: walk.text, truncated: walk.truncated })
+        Ok(WindowText {
+            text: walk.text,
+            truncated: walk.truncated,
+        })
     }
 }
 
@@ -117,9 +122,8 @@ fn read_window_records(on_screen_only: bool) -> Result<Vec<WindowRecord>, Captur
         kCGWindowListOptionAll
     };
 
-    let window_dicts = copy_window_info(list_option, kCGNullWindowID).ok_or_else(|| {
-        CaptureError::Internal("CGWindowListCopyWindowInfo returned null".into())
-    })?;
+    let window_dicts = copy_window_info(list_option, kCGNullWindowID)
+        .ok_or_else(|| CaptureError::Internal("CGWindowListCopyWindowInfo returned null".into()))?;
 
     let mut records = Vec::with_capacity(window_dicts.len() as usize);
     for index in 0..window_dicts.len() {
@@ -153,7 +157,14 @@ fn window_record_from_dict(dictionary: &CFDictionary<CFString, CFType>) -> Optio
     // Absent layer is treated as the normal window layer (0).
     let layer = dictionary_i64(dictionary, unsafe { kCGWindowLayer }).unwrap_or(0);
 
-    Some(WindowRecord { window_id, app, title, bounds, owner_pid, layer })
+    Some(WindowRecord {
+        window_id,
+        app,
+        title,
+        bounds,
+        owner_pid,
+        layer,
+    })
 }
 
 /// Reads an integer-valued key from a Quartz window dictionary.
@@ -275,7 +286,11 @@ struct TextWalk {
 
 impl TextWalk {
     fn new() -> Self {
-        Self { text: String::new(), remaining_nodes: AX_NODE_BUDGET, truncated: false }
+        Self {
+            text: String::new(),
+            remaining_nodes: AX_NODE_BUDGET,
+            truncated: false,
+        }
     }
 
     /// Visits `element` and, subject to `depth_remaining` and the node budget,
