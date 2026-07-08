@@ -8,7 +8,8 @@ pub fn to_mcp_error(err: CaptureError) -> ErrorData {
     match err {
         CaptureError::ScreenRecordingPermissionDenied => {
             #[cfg(target_os = "macos")]
-            let msg = "Screen Recording permission not granted to this process. Grant it in System \
+            let msg =
+                "Screen Recording permission not granted to this process. Grant it in System \
                        Settings > Privacy & Security > Screen Recording, then restart the agent.";
             #[cfg(target_os = "linux")]
             let msg = "Screen capture was denied. On Wayland, approve the screen-capture / \

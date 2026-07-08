@@ -45,6 +45,7 @@ pub use windows::LinuxWindowInspector;
 /// Construct the four Linux backends as trait objects. The single seam
 /// `main.rs` uses; identical signature to `vantage_platform_macos::backends()`.
 #[cfg(target_os = "linux")]
+#[allow(clippy::type_complexity)] // the 4-tuple is the deliberate backend-set seam
 pub fn backends() -> (
     Arc<dyn WindowInspector>,
     Arc<dyn ScreenCapturer>,

@@ -76,9 +76,7 @@ fn map_internal<E: std::fmt::Display>(e: E) -> CaptureError {
 /// Enumerate every top-level application frame in the AT-SPI desktop tree.
 /// Shared by `list_windows` (which then filters) and `read_window_text` (which
 /// re-resolves a `window_id` by re-hashing each frame's identity).
-pub(crate) async fn enumerate_frames(
-    conn: &zbus::Connection,
-) -> Result<Vec<Frame>, CaptureError> {
+pub(crate) async fn enumerate_frames(conn: &zbus::Connection) -> Result<Vec<Frame>, CaptureError> {
     let root = AccessibleProxy::builder(conn)
         .destination(REGISTRY_DEST)
         .map_err(map_internal)?

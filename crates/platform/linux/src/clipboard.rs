@@ -33,12 +33,20 @@ impl ClipboardAccess for LinuxClipboard {
         let (text, image) = match prefer {
             ClipboardPrefer::Text => {
                 let t = get_text(&mut board);
-                let i = if t.is_none() { get_image(&mut board) } else { None };
+                let i = if t.is_none() {
+                    get_image(&mut board)
+                } else {
+                    None
+                };
                 (t, i)
             }
             ClipboardPrefer::Image => {
                 let i = get_image(&mut board);
-                let t = if i.is_none() { get_text(&mut board) } else { None };
+                let t = if i.is_none() {
+                    get_text(&mut board)
+                } else {
+                    None
+                };
                 (t, i)
             }
         };

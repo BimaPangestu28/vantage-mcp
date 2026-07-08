@@ -149,7 +149,10 @@ mod tests {
             width: 64,
             height: 64,
         };
-        assert_eq!(crop_rect(bounds, 0, 0, 1.0, 1920, 1080), Some((0, 0, 64, 64)));
+        assert_eq!(
+            crop_rect(bounds, 0, 0, 1.0, 1920, 1080),
+            Some((0, 0, 64, 64))
+        );
     }
 
     #[test]
@@ -228,6 +231,9 @@ mod tests {
             crop_rect(bounds, 0, 0, f32::NAN, 1920, 1080),
             Some((0, 0, 64, 64))
         );
-        assert_eq!(crop_rect(bounds, 0, 0, 0.0, 1920, 1080), Some((0, 0, 64, 64)));
+        assert_eq!(
+            crop_rect(bounds, 0, 0, 0.0, 1920, 1080),
+            Some((0, 0, 64, 64))
+        );
     }
 }

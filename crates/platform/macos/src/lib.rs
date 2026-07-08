@@ -25,6 +25,7 @@ pub use windows::MacWindowInspector;
 /// Construct the four macOS backends as trait objects. Identical signature to
 /// `vantage_platform_linux::backends()`.
 #[cfg(target_os = "macos")]
+#[allow(clippy::type_complexity)] // the 4-tuple is the deliberate backend-set seam
 pub fn backends() -> (
     Arc<dyn WindowInspector>,
     Arc<dyn ScreenCapturer>,

@@ -8,10 +8,10 @@ use rmcp::{transport::stdio, ServiceExt};
 
 use handler::Vantage;
 
-#[cfg(target_os = "macos")]
-use vantage_platform_macos as backend;
 #[cfg(target_os = "linux")]
 use vantage_platform_linux as backend;
+#[cfg(target_os = "macos")]
+use vantage_platform_macos as backend;
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 compile_error!("vantage-mcp supports macOS and Linux only");
 
