@@ -8,5 +8,5 @@ license.workspace = true
 [dependencies]
 vantage-core = { path = "../../core" }
 
-# Real backend deps are added per-capability in Tasks 2-6 under:
-# [target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = "3"
