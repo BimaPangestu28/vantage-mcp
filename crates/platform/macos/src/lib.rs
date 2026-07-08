@@ -2,11 +2,15 @@
 #[cfg(target_os = "macos")]
 mod capture;
 #[cfg(target_os = "macos")]
+mod clipboard;
+#[cfg(target_os = "macos")]
 mod ocr;
 #[cfg(target_os = "macos")]
 mod windows;
 #[cfg(target_os = "macos")]
 pub use capture::MacScreenCapturer;
+#[cfg(target_os = "macos")]
+pub use clipboard::MacClipboard;
 #[cfg(target_os = "macos")]
 pub use ocr::MacTextRecognizer;
 #[cfg(target_os = "macos")]
