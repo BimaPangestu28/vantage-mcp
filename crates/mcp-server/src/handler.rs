@@ -8,9 +8,17 @@ use serde::{Deserialize, Serialize};
 
 use vantage_core::{
     ClipboardAccess, ScreenCapturer, TextRecognizer, WindowFilter, WindowInfo, WindowInspector,
+    WindowText,
 };
 
 use crate::error_map::to_mcp_error;
+
+/// Default accessibility-tree walk depth for `read_window_text` when the
+/// caller omits `depth`.
+pub const DEFAULT_DEPTH: u32 = 20;
+/// Hard cap on accessibility-tree walk depth for `read_window_text`,
+/// regardless of what the caller requests.
+pub const MAX_DEPTH: u32 = 50;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListWindowsParams {
@@ -20,6 +28,15 @@ pub struct ListWindowsParams {
     /// Restrict to on-screen windows. Defaults to true.
     #[serde(default)]
     pub on_screen_only: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadWindowTextParams {
+    /// Target window id (from list_windows).
+    pub window_id: u32,
+    /// Accessibility-tree depth to walk. Defaults to 20, capped at 50.
+    #[serde(default)]
+    pub depth: Option<u32>,
 }
 
 /// Object wrapper around the window list.
@@ -87,6 +104,23 @@ impl Vantage {
         result
             .map(|windows| Json(ListWindowsResult { windows }))
             .map_err(to_mcp_error)
+    }
+
+    /// Read a window's content as text via the accessibility tree.
+    /// Cheapest way to get window content; prefer this over screenshot + OCR.
+    #[tool(description = "Read a window's accessibility text (cheapest window-content read).")]
+    pub async fn read_window_text(
+        &self,
+        Parameters(params): Parameters<ReadWindowTextParams>,
+    ) -> Result<Json<WindowText>, ErrorData> {
+        let depth = params.depth.unwrap_or(DEFAULT_DEPTH).min(MAX_DEPTH);
+        let window_id = params.window_id;
+        let windows = self.windows.clone();
+        let result =
+            tokio::task::spawn_blocking(move || windows.read_window_text(window_id, depth))
+                .await
+                .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?;
+        result.map(Json).map_err(to_mcp_error)
     }
 }
 
@@ -186,5 +220,38 @@ mod tests {
         assert_eq!(out.0.windows.len(), 1);
         assert_eq!(out.0.windows[0].app, "Notes");
         assert_eq!(*mock.last_filter_on_screen_only.lock().unwrap(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn read_window_text_applies_default_and_caps_depth() {
+        use std::sync::Mutex;
+
+        struct DepthSpy {
+            seen: Mutex<Vec<u32>>,
+        }
+        impl WindowInspector for DepthSpy {
+            fn list_windows(&self, _f: WindowFilter) -> Result<Vec<WindowInfo>, CaptureError> {
+                Ok(vec![])
+            }
+            fn read_window_text(&self, _id: WindowId, depth: u32) -> Result<WindowText, CaptureError> {
+                self.seen.lock().unwrap().push(depth);
+                Ok(WindowText { text: "hi".into(), truncated: false })
+            }
+        }
+        let spy = Arc::new(DepthSpy { seen: Mutex::new(vec![]) });
+        let vantage = Vantage::new(spy.clone(), Arc::new(NoScreen), Arc::new(NoOcr), Arc::new(NoClip));
+
+        // default when omitted
+        vantage
+            .read_window_text(Parameters(ReadWindowTextParams { window_id: 1, depth: None }))
+            .await
+            .unwrap();
+        // caps when too large
+        vantage
+            .read_window_text(Parameters(ReadWindowTextParams { window_id: 1, depth: Some(999) }))
+            .await
+            .unwrap();
+
+        assert_eq!(*spy.seen.lock().unwrap(), vec![DEFAULT_DEPTH, MAX_DEPTH]);
     }
 }
