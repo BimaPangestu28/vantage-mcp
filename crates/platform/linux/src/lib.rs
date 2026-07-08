@@ -13,6 +13,8 @@ use std::sync::Arc;
 use vantage_core::{ClipboardAccess, ScreenCapturer, TextRecognizer, WindowInspector};
 
 #[cfg(target_os = "linux")]
+mod atspi_conn;
+#[cfg(target_os = "linux")]
 mod clipboard;
 #[cfg(target_os = "linux")]
 mod windows;
