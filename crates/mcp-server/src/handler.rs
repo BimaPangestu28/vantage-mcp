@@ -7,8 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use vantage_core::{
-    Bounds, ClipboardAccess, ScreenCapturer, TextRecognizer, WindowFilter, WindowInfo,
-    WindowInspector, WindowText,
+    Bounds, ClipboardAccess, ClipboardKind, ClipboardPrefer, ScreenCapturer, TextRecognizer,
+    WindowFilter, WindowInfo, WindowInspector, WindowText,
 };
 
 use crate::error_map::to_mcp_error;
@@ -58,6 +58,21 @@ pub struct CaptureOutput {
     pub image: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadClipboardParams {
+    /// "text" (default) or "image".
+    #[serde(default)]
+    pub prefer: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ClipboardOutput {
+    pub kind: ClipboardKind,
+    pub text: Option<String>,
+    /// base64-encoded PNG when an image is present.
+    pub image: Option<String>,
+}
+
 /// Object wrapper around the window list.
 ///
 /// The MCP spec requires a tool's `outputSchema` root to be an `object`, and
@@ -70,15 +85,14 @@ pub struct ListWindowsResult {
     pub windows: Vec<WindowInfo>,
 }
 
-/// The MCP server handler. Holds injected, platform-agnostic backends.
-/// `windows` is read by `list_windows`; the remaining backends are wired in
-/// now but not read until their tool methods land in later tasks (Tasks 5-7).
+/// The MCP server handler. Holds injected, platform-agnostic backends used
+/// by the `#[tool]` methods below: `windows` (list_windows, read_window_text),
+/// `capturer`/`ocr` (capture_region), and `clipboard` (read_clipboard).
 #[derive(Clone)]
 pub struct Vantage {
     pub(crate) windows: Arc<dyn WindowInspector>,
     pub(crate) capturer: Arc<dyn ScreenCapturer>,
     pub(crate) ocr: Arc<dyn TextRecognizer>,
-    #[allow(dead_code)]
     pub(crate) clipboard: Arc<dyn ClipboardAccess>,
 }
 
@@ -192,6 +206,35 @@ impl Vantage {
         .map_err(to_mcp_error)?;
 
         Ok(Json(CaptureOutput { text, image }))
+    }
+
+    /// Read the system clipboard. Defaults to preferring text.
+    #[tool(description = "Read the clipboard (text by default; image as base64 PNG).")]
+    pub async fn read_clipboard(
+        &self,
+        Parameters(params): Parameters<ReadClipboardParams>,
+    ) -> Result<Json<ClipboardOutput>, ErrorData> {
+        let prefer = match params.prefer.as_deref() {
+            None | Some("text") => ClipboardPrefer::Text,
+            Some("image") => ClipboardPrefer::Image,
+            Some(other) => {
+                return Err(ErrorData::invalid_params(
+                    format!("prefer must be \"text\" or \"image\", got {other:?}"),
+                    None,
+                ))
+            }
+        };
+        let clipboard = self.clipboard.clone();
+        let content = tokio::task::spawn_blocking(move || clipboard.read(prefer))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+
+        let image = match content.image {
+            Some(img) => Some(rgba_to_base64_png(&img).map_err(to_mcp_error)?),
+            None => None,
+        };
+        Ok(Json(ClipboardOutput { kind: content.kind, text: content.text, image }))
     }
 }
 
@@ -356,5 +399,53 @@ mod tests {
             .unwrap();
         assert_eq!(out.0.text.as_deref(), Some("hello"));
         assert!(out.0.image.is_none(), "text mode must not return pixels");
+    }
+
+    #[tokio::test]
+    async fn read_clipboard_returns_text_and_defaults_to_text_prefer() {
+        struct ClipText;
+        impl ClipboardAccess for ClipText {
+            fn read(&self, prefer: ClipboardPrefer) -> Result<ClipboardContent, CaptureError> {
+                assert_eq!(prefer, ClipboardPrefer::Text);
+                Ok(ClipboardContent {
+                    kind: vantage_core::ClipboardKind::Text,
+                    text: Some("copied".into()),
+                    image: None,
+                })
+            }
+        }
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(NoScreen),
+            Arc::new(NoOcr),
+            Arc::new(ClipText),
+        );
+        let out = vantage
+            .read_clipboard(Parameters(ReadClipboardParams { prefer: None }))
+            .await
+            .unwrap();
+        assert_eq!(out.0.text.as_deref(), Some("copied"));
+        assert!(out.0.image.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_clipboard_rejects_bad_prefer() {
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(NoScreen),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+        );
+        // `rmcp::Json<T>` does not implement `Debug`, so `Result::unwrap_err`
+        // (which requires the `Ok` type to be `Debug`) is not usable here;
+        // extract the error via `match` instead.
+        let result = vantage
+            .read_clipboard(Parameters(ReadClipboardParams { prefer: Some("video".into()) }))
+            .await;
+        let err = match result {
+            Ok(_) => panic!("expected an error for an invalid prefer value"),
+            Err(e) => e,
+        };
+        assert!(err.message.to_lowercase().contains("prefer"));
     }
 }
