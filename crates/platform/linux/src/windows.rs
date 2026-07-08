@@ -166,6 +166,99 @@ fn is_window_role(role: Role) -> bool {
     )
 }
 
+/// Cap on the number of accessible nodes visited during a single text walk,
+/// bounding cost on pathologically deep/wide trees. Hitting it sets `truncated`.
+const NODE_BUDGET: usize = 2000;
+
+/// Build an `Accessible` proxy for a (bus name, object path) pair.
+async fn build_accessible<'a>(
+    conn: &'a zbus::Connection,
+    dest: &str,
+    path: &str,
+) -> Result<AccessibleProxy<'a>, CaptureError> {
+    AccessibleProxy::builder(conn)
+        .destination(dest.to_owned())
+        .map_err(map_internal)?
+        .path(path.to_owned())
+        .map_err(map_internal)?
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+        .map_err(map_internal)
+}
+
+/// Extract a node's own text: prefer the `Text` interface's content, falling
+/// back to the accessible `Name`. Returns `None` when the node has no text.
+async fn node_text(node: &AccessibleProxy<'_>) -> Option<String> {
+    if let Ok(proxies) = node.proxies().await {
+        if let Ok(text_iface) = proxies.text().await {
+            if let Ok(count) = text_iface.character_count().await {
+                if count > 0 {
+                    if let Ok(s) = text_iface.get_text(0, count).await {
+                        let s = s.trim();
+                        if !s.is_empty() {
+                            return Some(s.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    match node.name().await {
+        Ok(name) if !name.trim().is_empty() => Some(name.trim().to_owned()),
+        _ => None,
+    }
+}
+
+/// Depth-first walk of a frame's accessible subtree collecting text, bounded by
+/// `depth_limit` levels and `NODE_BUDGET` nodes. Returns the joined text and
+/// whether either bound stopped the walk before it completed.
+async fn walk_text(
+    conn: &zbus::Connection,
+    root_bus: &str,
+    root_path: &str,
+    depth_limit: u32,
+) -> Result<(String, bool), CaptureError> {
+    // Stack of (bus, path, depth). Start at the frame itself (depth 0).
+    let mut stack: Vec<(String, String, u32)> =
+        vec![(root_bus.to_owned(), root_path.to_owned(), 0)];
+    let mut collected: Vec<String> = Vec::new();
+    let mut nodes = 0usize;
+    let mut truncated = false;
+
+    while let Some((bus, path, depth)) = stack.pop() {
+        if nodes >= NODE_BUDGET {
+            truncated = true;
+            break;
+        }
+        let Ok(node) = build_accessible(conn, &bus, &path).await else {
+            continue;
+        };
+        nodes += 1;
+
+        if let Some(text) = node_text(&node).await {
+            collected.push(text);
+        }
+
+        if depth >= depth_limit {
+            // There may be deeper content we are choosing not to visit.
+            if node.child_count().await.unwrap_or(0) > 0 {
+                truncated = true;
+            }
+            continue;
+        }
+
+        if let Ok(children) = node.get_children().await {
+            // Push in reverse so the LIFO stack yields children in tree order.
+            for child in children.into_iter().rev() {
+                stack.push((child.name.to_string(), child.path.to_string(), depth + 1));
+            }
+        }
+    }
+
+    Ok((collected.join("\n"), truncated))
+}
+
 impl WindowInspector for LinuxWindowInspector {
     fn list_windows(&self, filter: WindowFilter) -> Result<Vec<WindowInfo>, CaptureError> {
         let rt = self.rt.lock().expect("runtime mutex");
@@ -186,12 +279,22 @@ impl WindowInspector for LinuxWindowInspector {
 
     fn read_window_text(
         &self,
-        _window_id: WindowId,
-        _depth: u32,
+        window_id: WindowId,
+        depth: u32,
     ) -> Result<WindowText, CaptureError> {
-        // Implemented in Task 6.
-        Err(CaptureError::Unsupported(
-            "linux window text not yet implemented".into(),
-        ))
+        let rt = self.rt.lock().expect("runtime mutex");
+        rt.block_on(async {
+            let conn = connect().await?;
+            // Re-resolve the frame by re-enumerating and matching the same hash
+            // (stateless resolve-by-id, mirroring the macOS backend).
+            let frame = enumerate_frames(conn.connection())
+                .await?
+                .into_iter()
+                .find(|f| f.info.window_id == window_id)
+                .ok_or(CaptureError::WindowNotFound(window_id))?;
+            let (text, truncated) =
+                walk_text(conn.connection(), &frame.bus, &frame.path, depth).await?;
+            Ok(WindowText { text, truncated })
+        })
     }
 }

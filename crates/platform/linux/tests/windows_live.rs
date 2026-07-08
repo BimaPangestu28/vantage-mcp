@@ -22,3 +22,21 @@ fn lists_at_least_one_window() {
     );
     assert!(windows.iter().any(|w| !w.app.is_empty()));
 }
+
+#[test]
+#[ignore = "requires live desktop session + AT-SPI accessibility bus"]
+fn reads_some_text_from_first_window() {
+    let inspector = LinuxWindowInspector::new();
+    let windows = inspector
+        .list_windows(WindowFilter {
+            app_filter: None,
+            on_screen_only: true,
+        })
+        .unwrap();
+    let target = windows.first().expect("a window");
+    let text = inspector
+        .read_window_text(target.window_id, 20)
+        .expect("read_window_text");
+    // Content varies across apps; assert the call path returns the struct.
+    let _ = text.truncated;
+}
