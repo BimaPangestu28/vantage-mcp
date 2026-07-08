@@ -30,9 +30,11 @@ impl TextRecognizer for LinuxTextRecognizer {
                  traineddata (e.g. apt install libtesseract-dev tesseract-ocr-eng)."
             ))
         })?;
+        // `set_frame` and `get_text` return different error types, so they are
+        // handled with separate `?` rather than chained through `and_then`.
         let bytes_per_pixel: i32 = 4;
         let bytes_per_line = image.width as i32 * bytes_per_pixel;
-        let text = api
+        let mut api = api
             .set_frame(
                 &image.pixels,
                 image.width as i32,
@@ -40,8 +42,10 @@ impl TextRecognizer for LinuxTextRecognizer {
                 bytes_per_pixel,
                 bytes_per_line,
             )
-            .and_then(|mut api| api.get_text())
-            .map_err(|e| CaptureError::Internal(format!("tesseract recognize: {e}")))?;
+            .map_err(|e| CaptureError::Internal(format!("tesseract set_frame: {e}")))?;
+        let text = api
+            .get_text()
+            .map_err(|e| CaptureError::Internal(format!("tesseract get_text: {e}")))?;
         Ok(text)
     }
 }
