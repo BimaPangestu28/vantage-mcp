@@ -17,8 +17,13 @@ pub fn downscale(input: &RgbaImage, max_dim: u32) -> RgbaImage {
     let buf: ImageBuffer<Rgba<u8>, Vec<u8>> =
         ImageBuffer::from_raw(input.width, input.height, input.pixels.clone())
             .expect("valid rgba buffer");
-    let resized = image::imageops::resize(&buf, new_w, new_h, image::imageops::FilterType::Triangle);
-    RgbaImage { width: new_w, height: new_h, pixels: resized.into_raw() }
+    let resized =
+        image::imageops::resize(&buf, new_w, new_h, image::imageops::FilterType::Triangle);
+    RgbaImage {
+        width: new_w,
+        height: new_h,
+        pixels: resized.into_raw(),
+    }
 }
 
 /// Encode an RGBA image as a base64 PNG string.
@@ -28,7 +33,12 @@ pub fn rgba_to_base64_png(input: &RgbaImage) -> Result<String, CaptureError> {
             .ok_or_else(|| CaptureError::Internal("invalid rgba buffer".into()))?;
     let mut png = Vec::new();
     image::codecs::png::PngEncoder::new(&mut png)
-        .write_image(buf.as_raw(), input.width, input.height, image::ExtendedColorType::Rgba8)
+        .write_image(
+            buf.as_raw(),
+            input.width,
+            input.height,
+            image::ExtendedColorType::Rgba8,
+        )
         .map_err(|e| CaptureError::Internal(format!("png encode: {e}")))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(png))
 }
@@ -38,7 +48,11 @@ mod tests {
     use super::*;
 
     fn solid(w: u32, h: u32) -> RgbaImage {
-        RgbaImage { width: w, height: h, pixels: vec![255u8; (w * h * 4) as usize] }
+        RgbaImage {
+            width: w,
+            height: h,
+            pixels: vec![255u8; (w * h * 4) as usize],
+        }
     }
 
     #[test]
@@ -60,7 +74,9 @@ mod tests {
     #[test]
     fn png_roundtrips_dimensions() {
         let b64 = rgba_to_base64_png(&solid(4, 4)).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap();
         let decoded = image::load_from_memory(&bytes).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (4, 4));
     }

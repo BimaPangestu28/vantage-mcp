@@ -46,13 +46,27 @@ mod tests {
 
     #[test]
     fn every_variant_has_a_distinct_kind() {
-        let bounds = Bounds { x: 0, y: 0, width: 1, height: 1 };
+        let bounds = Bounds {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
         let cases = [
-            (CaptureError::ScreenRecordingPermissionDenied, ErrorKind::ScreenRecordingPermission),
-            (CaptureError::AccessibilityPermissionDenied, ErrorKind::AccessibilityPermission),
+            (
+                CaptureError::ScreenRecordingPermissionDenied,
+                ErrorKind::ScreenRecordingPermission,
+            ),
+            (
+                CaptureError::AccessibilityPermissionDenied,
+                ErrorKind::AccessibilityPermission,
+            ),
             (CaptureError::WindowNotFound(7), ErrorKind::NotFound),
             (CaptureError::InvalidBounds(bounds), ErrorKind::InvalidInput),
-            (CaptureError::Unsupported("x".into()), ErrorKind::Unsupported),
+            (
+                CaptureError::Unsupported("x".into()),
+                ErrorKind::Unsupported,
+            ),
             (CaptureError::Internal("x".into()), ErrorKind::Internal),
         ];
         for (err, expected) in cases {

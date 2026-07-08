@@ -6,7 +6,8 @@ use crate::types::{
 
 pub trait WindowInspector: Send + Sync {
     fn list_windows(&self, filter: WindowFilter) -> Result<Vec<WindowInfo>, CaptureError>;
-    fn read_window_text(&self, window_id: WindowId, depth: u32) -> Result<WindowText, CaptureError>;
+    fn read_window_text(&self, window_id: WindowId, depth: u32)
+        -> Result<WindowText, CaptureError>;
 }
 
 pub trait ScreenCapturer: Send + Sync {

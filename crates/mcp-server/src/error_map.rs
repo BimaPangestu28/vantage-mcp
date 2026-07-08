@@ -4,9 +4,6 @@ use vantage_core::CaptureError;
 /// Map a domain error to an MCP error. Permission-denied variants use
 /// `invalid_request` with an actionable fix message and never collapse into
 /// `internal_error`.
-// Not yet called from `main`/`handler` — wired in once tool methods exist
-// (Task 4+) to convert `CaptureError` results into `rmcp::ErrorData`.
-#[allow(dead_code)]
 pub fn to_mcp_error(err: CaptureError) -> ErrorData {
     match err {
         CaptureError::ScreenRecordingPermissionDenied => ErrorData::invalid_request(

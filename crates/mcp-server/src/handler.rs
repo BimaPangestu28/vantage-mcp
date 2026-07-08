@@ -234,7 +234,11 @@ impl Vantage {
             Some(img) => Some(rgba_to_base64_png(&img).map_err(to_mcp_error)?),
             None => None,
         };
-        Ok(Json(ClipboardOutput { kind: content.kind, text: content.text, image }))
+        Ok(Json(ClipboardOutput {
+            kind: content.kind,
+            text: content.text,
+            image,
+        }))
     }
 }
 
@@ -259,8 +263,8 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use vantage_core::{
-        Bounds, CaptureError, ClipboardContent, ClipboardPrefer, RgbaImage, WindowFilter,
-        WindowId, WindowInfo, WindowText,
+        Bounds, CaptureError, ClipboardContent, ClipboardPrefer, RgbaImage, WindowFilter, WindowId,
+        WindowInfo, WindowText,
     };
 
     #[derive(Default)]
@@ -278,7 +282,10 @@ mod tests {
             Ok(out)
         }
         fn read_window_text(&self, _id: WindowId, _depth: u32) -> Result<WindowText, CaptureError> {
-            Ok(WindowText { text: String::new(), truncated: false })
+            Ok(WindowText {
+                text: String::new(),
+                truncated: false,
+            })
         }
     }
 
@@ -302,7 +309,12 @@ mod tests {
     }
 
     pub(crate) fn vantage_with_windows(windows: Arc<MockWindows>) -> Vantage {
-        Vantage::new(windows, Arc::new(NoScreen), Arc::new(NoOcr), Arc::new(NoClip))
+        Vantage::new(
+            windows,
+            Arc::new(NoScreen),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+        )
     }
 
     fn win(id: WindowId, app: &str, title: &str) -> WindowInfo {
@@ -310,7 +322,12 @@ mod tests {
             window_id: id,
             app: app.into(),
             title: title.into(),
-            bounds: Bounds { x: 0, y: 0, width: 100, height: 100 },
+            bounds: Bounds {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100,
+            },
             focused: false,
         }
     }
@@ -347,22 +364,42 @@ mod tests {
             fn list_windows(&self, _f: WindowFilter) -> Result<Vec<WindowInfo>, CaptureError> {
                 Ok(vec![])
             }
-            fn read_window_text(&self, _id: WindowId, depth: u32) -> Result<WindowText, CaptureError> {
+            fn read_window_text(
+                &self,
+                _id: WindowId,
+                depth: u32,
+            ) -> Result<WindowText, CaptureError> {
                 self.seen.lock().unwrap().push(depth);
-                Ok(WindowText { text: "hi".into(), truncated: false })
+                Ok(WindowText {
+                    text: "hi".into(),
+                    truncated: false,
+                })
             }
         }
-        let spy = Arc::new(DepthSpy { seen: Mutex::new(vec![]) });
-        let vantage = Vantage::new(spy.clone(), Arc::new(NoScreen), Arc::new(NoOcr), Arc::new(NoClip));
+        let spy = Arc::new(DepthSpy {
+            seen: Mutex::new(vec![]),
+        });
+        let vantage = Vantage::new(
+            spy.clone(),
+            Arc::new(NoScreen),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+        );
 
         // default when omitted
         vantage
-            .read_window_text(Parameters(ReadWindowTextParams { window_id: 1, depth: None }))
+            .read_window_text(Parameters(ReadWindowTextParams {
+                window_id: 1,
+                depth: None,
+            }))
             .await
             .unwrap();
         // caps when too large
         vantage
-            .read_window_text(Parameters(ReadWindowTextParams { window_id: 1, depth: Some(999) }))
+            .read_window_text(Parameters(ReadWindowTextParams {
+                window_id: 1,
+                depth: Some(999),
+            }))
             .await
             .unwrap();
 
@@ -374,7 +411,11 @@ mod tests {
         struct FakeScreen;
         impl ScreenCapturer for FakeScreen {
             fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
-                Ok(RgbaImage { width: 2, height: 2, pixels: vec![0u8; 16] })
+                Ok(RgbaImage {
+                    width: 2,
+                    height: 2,
+                    pixels: vec![0u8; 16],
+                })
             }
         }
         struct FakeOcr;
@@ -391,7 +432,12 @@ mod tests {
         );
         let out = vantage
             .capture_region(Parameters(CaptureRegionParams {
-                bounds: Bounds { x: 0, y: 0, width: 2, height: 2 },
+                bounds: Bounds {
+                    x: 0,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                },
                 output: None,
                 max_dimension: None,
             }))
@@ -440,7 +486,9 @@ mod tests {
         // (which requires the `Ok` type to be `Debug`) is not usable here;
         // extract the error via `match` instead.
         let result = vantage
-            .read_clipboard(Parameters(ReadClipboardParams { prefer: Some("video".into()) }))
+            .read_clipboard(Parameters(ReadClipboardParams {
+                prefer: Some("video".into()),
+            }))
             .await;
         let err = match result {
             Ok(_) => panic!("expected an error for an invalid prefer value"),
