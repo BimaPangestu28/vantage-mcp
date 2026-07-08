@@ -46,7 +46,10 @@ impl ServerHandler for Vantage {
     fn get_info(&self) -> ServerInfo {
         let capabilities = ServerCapabilities::builder().enable_tools().build();
         ServerInfo::new(capabilities)
-            .with_server_info(Implementation::new("vantage-mcp", env!("CARGO_PKG_VERSION")))
+            .with_server_info(Implementation::new(
+                "vantage-mcp",
+                env!("CARGO_PKG_VERSION"),
+            ))
             .with_instructions(
                 "Desktop capture for macOS. Prefer read_window_text over screenshots; \
                  capture_region defaults to OCR text (no image) to keep token cost low.",

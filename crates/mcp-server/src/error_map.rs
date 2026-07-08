@@ -22,10 +22,9 @@ pub fn to_mcp_error(err: CaptureError) -> ErrorData {
         CaptureError::WindowNotFound(id) => {
             ErrorData::invalid_params(format!("window {id} not found"), None)
         }
-        CaptureError::InvalidBounds(b) => ErrorData::invalid_params(
-            format!("region {b:?} is outside all display bounds"),
-            None,
-        ),
+        CaptureError::InvalidBounds(b) => {
+            ErrorData::invalid_params(format!("region {b:?} is outside all display bounds"), None)
+        }
         CaptureError::Unsupported(msg) => {
             ErrorData::invalid_request(format!("unsupported on this platform: {msg}"), None)
         }

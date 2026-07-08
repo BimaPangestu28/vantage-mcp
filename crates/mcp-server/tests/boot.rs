@@ -40,9 +40,15 @@ fn initialize_handshake_and_clean_stdout() {
 
     let parsed: serde_json::Value =
         serde_json::from_str(line.trim()).expect("stdout line 1 must be valid JSON-RPC");
-    assert_eq!(parsed["jsonrpc"], "2.0", "first stdout line must be JSON-RPC");
+    assert_eq!(
+        parsed["jsonrpc"], "2.0",
+        "first stdout line must be JSON-RPC"
+    );
     assert_eq!(parsed["id"], 1);
-    assert!(parsed.get("result").is_some(), "initialize must return a result");
+    assert!(
+        parsed.get("result").is_some(),
+        "initialize must return a result"
+    );
 
     child.kill().ok();
     child.wait().ok();

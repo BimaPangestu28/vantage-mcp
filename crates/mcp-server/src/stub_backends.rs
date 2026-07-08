@@ -11,7 +11,8 @@
 
 use vantage_core::{
     Bounds, CaptureError, ClipboardAccess, ClipboardContent, ClipboardPrefer, RgbaImage,
-    ScreenCapturer, TextRecognizer, WindowFilter, WindowId, WindowInfo, WindowInspector, WindowText,
+    ScreenCapturer, TextRecognizer, WindowFilter, WindowId, WindowInfo, WindowInspector,
+    WindowText,
 };
 
 const NOT_IMPLEMENTED: &str = "not implemented until Task 12";
