@@ -1,21 +1,50 @@
 use std::sync::Arc;
 
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
-use rmcp::{tool_handler, tool_router, ServerHandler};
+use rmcp::{tool, tool_handler, tool_router, ErrorData, Json, ServerHandler};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-use vantage_core::{ClipboardAccess, ScreenCapturer, TextRecognizer, WindowInspector};
+use vantage_core::{
+    ClipboardAccess, ScreenCapturer, TextRecognizer, WindowFilter, WindowInfo, WindowInspector,
+};
+
+use crate::error_map::to_mcp_error;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListWindowsParams {
+    /// Only return windows whose owning application name equals this.
+    #[serde(default)]
+    pub app_filter: Option<String>,
+    /// Restrict to on-screen windows. Defaults to true.
+    #[serde(default)]
+    pub on_screen_only: Option<bool>,
+}
+
+/// Object wrapper around the window list.
+///
+/// The MCP spec requires a tool's `outputSchema` root to be an `object`, and
+/// rmcp 2.1.0 enforces this at schema-generation time — returning a bare
+/// `Vec<_>` (JSON array root) panics the server when `tools/list` runs. The
+/// windows are therefore nested under a single `windows` field.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListWindowsResult {
+    /// The matching windows, in the backend's native ordering.
+    pub windows: Vec<WindowInfo>,
+}
 
 /// The MCP server handler. Holds injected, platform-agnostic backends.
-/// Tool methods are added in later tasks; this establishes the wiring.
-// The backend fields are unused until tool methods are added in later tasks
-// (Task 4+); they are wired in now so the constructor and injection points
-// are stable.
-#[allow(dead_code)]
+/// `windows` is read by `list_windows`; the remaining backends are wired in
+/// now but not read until their tool methods land in later tasks (Tasks 5-7).
 #[derive(Clone)]
 pub struct Vantage {
     pub(crate) windows: Arc<dyn WindowInspector>,
+    #[allow(dead_code)]
     pub(crate) capturer: Arc<dyn ScreenCapturer>,
+    #[allow(dead_code)]
     pub(crate) ocr: Arc<dyn TextRecognizer>,
+    #[allow(dead_code)]
     pub(crate) clipboard: Arc<dyn ClipboardAccess>,
 }
 
@@ -39,6 +68,26 @@ impl Vantage {
             clipboard,
         }
     }
+
+    /// List on-screen windows: window_id, owning app, title, bounds, and focus.
+    /// Primary entry point for an agent to orient before reading a window.
+    #[tool(description = "List on-screen windows (id, app, title, bounds, focused).")]
+    pub async fn list_windows(
+        &self,
+        Parameters(params): Parameters<ListWindowsParams>,
+    ) -> Result<Json<ListWindowsResult>, ErrorData> {
+        let filter = WindowFilter {
+            app_filter: params.app_filter,
+            on_screen_only: params.on_screen_only.unwrap_or(true),
+        };
+        let windows = self.windows.clone();
+        let result = tokio::task::spawn_blocking(move || windows.list_windows(filter))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?;
+        result
+            .map(|windows| Json(ListWindowsResult { windows }))
+            .map_err(to_mcp_error)
+    }
 }
 
 #[tool_handler]
@@ -54,5 +103,88 @@ impl ServerHandler for Vantage {
                 "Desktop capture for macOS. Prefer read_window_text over screenshots; \
                  capture_region defaults to OCR text (no image) to keep token cost low.",
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use vantage_core::{
+        Bounds, CaptureError, ClipboardContent, ClipboardPrefer, RgbaImage, WindowFilter,
+        WindowId, WindowInfo, WindowText,
+    };
+
+    #[derive(Default)]
+    pub(crate) struct MockWindows {
+        pub windows: Vec<WindowInfo>,
+        pub last_filter_on_screen_only: std::sync::Mutex<Option<bool>>,
+    }
+    impl WindowInspector for MockWindows {
+        fn list_windows(&self, filter: WindowFilter) -> Result<Vec<WindowInfo>, CaptureError> {
+            *self.last_filter_on_screen_only.lock().unwrap() = Some(filter.on_screen_only);
+            let mut out = self.windows.clone();
+            if let Some(app) = filter.app_filter {
+                out.retain(|w| w.app == app);
+            }
+            Ok(out)
+        }
+        fn read_window_text(&self, _id: WindowId, _depth: u32) -> Result<WindowText, CaptureError> {
+            Ok(WindowText { text: String::new(), truncated: false })
+        }
+    }
+
+    pub(crate) struct NoScreen;
+    impl ScreenCapturer for NoScreen {
+        fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+    }
+    pub(crate) struct NoOcr;
+    impl TextRecognizer for NoOcr {
+        fn recognize(&self, _i: &RgbaImage) -> Result<String, CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+    }
+    pub(crate) struct NoClip;
+    impl ClipboardAccess for NoClip {
+        fn read(&self, _p: ClipboardPrefer) -> Result<ClipboardContent, CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+    }
+
+    pub(crate) fn vantage_with_windows(windows: Arc<MockWindows>) -> Vantage {
+        Vantage::new(windows, Arc::new(NoScreen), Arc::new(NoOcr), Arc::new(NoClip))
+    }
+
+    fn win(id: WindowId, app: &str, title: &str) -> WindowInfo {
+        WindowInfo {
+            window_id: id,
+            app: app.into(),
+            title: title.into(),
+            bounds: Bounds { x: 0, y: 0, width: 100, height: 100 },
+            focused: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_windows_defaults_on_screen_only_true_and_filters_by_app() {
+        let mock = Arc::new(MockWindows {
+            windows: vec![win(1, "Safari", "A"), win(2, "Notes", "B")],
+            ..Default::default()
+        });
+        let vantage = vantage_with_windows(mock.clone());
+
+        let out = vantage
+            .list_windows(Parameters(ListWindowsParams {
+                app_filter: Some("Notes".into()),
+                on_screen_only: None,
+            }))
+            .await
+            .expect("ok");
+
+        assert_eq!(out.0.windows.len(), 1);
+        assert_eq!(out.0.windows[0].app, "Notes");
+        assert_eq!(*mock.last_filter_on_screen_only.lock().unwrap(), Some(true));
     }
 }
