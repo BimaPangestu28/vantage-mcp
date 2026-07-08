@@ -3212,7 +3212,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vantage-core",
+ "vantage-platform-linux",
  "vantage-platform-macos",
+]
+
+[[package]]
+name = "vantage-platform-linux"
+version = "0.1.0"
+dependencies = [
+ "vantage-core",
 ]
 
 [[package]]
