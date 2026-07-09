@@ -555,14 +555,7 @@ mod tests {
         ocr: Arc<dyn TextRecognizer>,
         clipboard: Arc<dyn ClipboardAccess>,
     ) -> Vantage {
-        Vantage::new(
-            windows,
-            capturer,
-            ocr,
-            clipboard,
-            Arc::new(NoInput),
-            false,
-        )
+        Vantage::new(windows, capturer, ocr, clipboard, Arc::new(NoInput), false)
     }
 
     pub(crate) fn vantage_with_windows(windows: Arc<MockWindows>) -> Vantage {

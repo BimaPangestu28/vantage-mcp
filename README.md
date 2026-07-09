@@ -34,6 +34,10 @@ keeps token cost low for the common case; ask for `output: "image"` or
 - `read_clipboard` — read the system clipboard (text by default, or an
   image as base64 PNG).
 
+**Act tools** (write/side-effecting) are **disabled by default** and gated —
+see [Act tools](#act-tools-gated): `clipboard_write`, `type_text`, `click`,
+`focus_window`.
+
 ## Prerequisites
 
 - Rust 1.95 (pinned via `rust-toolchain.toml`).
@@ -130,6 +134,25 @@ by the compositor — use `capture_region` there). Roughly equivalent to
 Takes no parameters. Returns `{ displays: [{ display_id, name, bounds,
 scale_factor, is_primary }, ...] }`.
 
+### Act tools (gated)
+
+Act tools **write** / cause side effects, so they are **off by default and
+structurally isolated**: unless the operator opts in, they are not mounted —
+absent from `tools/list` and uncallable, so a prompt-injection cannot reach
+them. Enable them by launching the binary with the `--allow-act` flag **or**
+setting `VANTAGE_ALLOW_ACT=1` (`true`/`yes` also accepted). On enable, a warning
+is logged to stderr.
+
+| tool | params | notes |
+|---|---|---|
+| `clipboard_write` | `{ text }` | set the system clipboard (macOS + Linux X11/Wayland) |
+| `type_text` | `{ text }` | synthetic keystrokes; macOS + Linux/X11 (XWayland). Native Wayland injection is compositor-restricted → actionable error |
+| `click` | `{ x, y, button? }` | mouse click at absolute coords; `button` is `"left"` (default)/`"right"`/`"middle"`. Same platform notes as `type_text` |
+| `focus_window` | `{ window_id }` | raise/focus a window (from `list_windows`). Linux via AT-SPI (X11 + Wayland); macOS activates the owning app |
+
+Each returns `{ ok: true }` on success. Every act call is logged to stderr for
+auditability.
+
 **`read_clipboard`**
 
 | param | type | default | description |
@@ -146,15 +169,14 @@ isn't a JSON-RPC message, that's a bug: file an issue.
 
 ## Roadmap
 
-This build covers the read slice on **macOS and Linux** (Linux via AT-SPI for
-windows/text, xcap for capture on X11 and Wayland, Tesseract for OCR, arboard
-for clipboard), plus window-level capture and display enumeration
-(`capture_window`, `list_displays`). Later phases, not yet implemented:
+This build covers, on **macOS and Linux** (Linux via AT-SPI for windows/text,
+xcap for capture on X11 and Wayland, Tesseract for OCR, arboard for clipboard):
+the read slice, window-level capture + display enumeration (`capture_window`,
+`list_displays`), and the gated act tools (`clipboard_write`, `type_text`,
+`click`, `focus_window`) — the full original roadmap.
 
-- **Gated act tools** — clipboard write, type, click, focus — behind an
-  explicit policy gate and disabled by default, kept structurally separate
-  from the read tools to avoid prompt-injection-driven side effects. On Linux
-  input would go via X11 XTEST / the Wayland libei InputCapture portal. *(Spec C)*
+Possible future work: image clipboard-write, richer input (scroll, key chords,
+drag), and first-class native-Wayland input via the libei/RemoteDesktop portal.
 
 See `PRD-desktop-capture-mcp.md` for the full product spec, and
 `docs/superpowers/specs/` for the per-slice design specs.
