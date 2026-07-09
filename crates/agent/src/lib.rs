@@ -3,3 +3,4 @@
 //! the integration tests.
 pub mod config;
 pub mod deepseek;
+pub mod mcp;

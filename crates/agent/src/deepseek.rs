@@ -99,7 +99,11 @@ impl DeepSeek {
 
     /// One chat completion round-trip. Returns the assistant `Message` (which may
     /// carry `tool_calls` instead of `content`).
-    pub async fn chat(&self, messages: &[Message], tools: &[ToolSchema]) -> anyhow::Result<Message> {
+    pub async fn chat(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+    ) -> anyhow::Result<Message> {
         #[derive(Serialize)]
         struct Req<'a> {
             model: &'a str,
