@@ -455,12 +455,10 @@ impl Vantage {
         };
         let text = params.text;
         let input = self.input.clone();
-        tokio::task::spawn_blocking(move || {
-            input.write_clipboard(text.as_deref(), image.as_ref())
-        })
-        .await
-        .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
-        .map_err(to_mcp_error)?;
+        tokio::task::spawn_blocking(move || input.write_clipboard(text.as_deref(), image.as_ref()))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
         Ok(Json(AckOutput { ok: true }))
     }
 
@@ -1143,7 +1141,10 @@ mod tests {
             Ok(_) => panic!("expected invalid_params when both text and image are absent"),
             Err(e) => e,
         };
-        assert!(err.message.to_lowercase().contains("text") || err.message.to_lowercase().contains("image"));
+        assert!(
+            err.message.to_lowercase().contains("text")
+                || err.message.to_lowercase().contains("image")
+        );
     }
 
     #[tokio::test]

@@ -92,13 +92,7 @@ impl InputController for LinuxInputController {
             .map_err(|e| classify_input_error(&e.to_string()))
     }
 
-    fn click(
-        &self,
-        x: i32,
-        y: i32,
-        button: MouseButton,
-        double: bool,
-    ) -> Result<(), CaptureError> {
+    fn click(&self, x: i32, y: i32, button: MouseButton, double: bool) -> Result<(), CaptureError> {
         use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
         let mut enigo =
             Enigo::new(&Settings::default()).map_err(|e| classify_input_error(&e.to_string()))?;
@@ -253,7 +247,10 @@ mod combo_tests {
         assert_eq!(parse_combo("cmd+c").unwrap().0, vec![Key::Meta]);
         assert_eq!(parse_combo("enter").unwrap().1, Key::Return);
         assert_eq!(parse_combo("f5").unwrap().1, Key::F5);
-        assert_eq!(parse_combo("  alt + Tab ").unwrap(), (vec![Key::Alt], Key::Tab));
+        assert_eq!(
+            parse_combo("  alt + Tab ").unwrap(),
+            (vec![Key::Alt], Key::Tab)
+        );
     }
 
     #[test]

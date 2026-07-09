@@ -36,13 +36,7 @@ pub trait InputController: Send + Sync {
         image: Option<&RgbaImage>,
     ) -> Result<(), CaptureError>;
     fn type_text(&self, text: &str) -> Result<(), CaptureError>;
-    fn click(
-        &self,
-        x: i32,
-        y: i32,
-        button: MouseButton,
-        double: bool,
-    ) -> Result<(), CaptureError>;
+    fn click(&self, x: i32, y: i32, button: MouseButton, double: bool) -> Result<(), CaptureError>;
     fn focus_window(&self, target: &WindowInfo) -> Result<(), CaptureError>;
     fn move_mouse(&self, x: i32, y: i32) -> Result<(), CaptureError>;
     /// Press a modifier+key combo, e.g. "ctrl+shift+t".

@@ -51,13 +51,7 @@ impl InputController for MacInputController {
             .map_err(|e| CaptureError::Internal(format!("input type: {e}")))
     }
 
-    fn click(
-        &self,
-        x: i32,
-        y: i32,
-        button: MouseButton,
-        double: bool,
-    ) -> Result<(), CaptureError> {
+    fn click(&self, x: i32, y: i32, button: MouseButton, double: bool) -> Result<(), CaptureError> {
         use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
         let mut enigo = Enigo::new(&Settings::default())
             .map_err(|e| CaptureError::Internal(format!("input init: {e}")))?;

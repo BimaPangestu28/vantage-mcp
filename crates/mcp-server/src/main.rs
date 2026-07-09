@@ -52,7 +52,10 @@ fn act_tools(
             .collect();
     }
     if flag_all || allow_env {
-        return handler::ACT_TOOL_NAMES.iter().map(|s| s.to_string()).collect();
+        return handler::ACT_TOOL_NAMES
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
     Vec::new()
 }

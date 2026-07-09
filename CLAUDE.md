@@ -74,14 +74,17 @@ Four-crate Cargo workspace with a strict dependency direction —
   as `Arc<dyn Trait>` plus a composed `tool_router` field. Tools split into two
   `#[tool_router(router = …)]` groups: **read** (`list_windows`,
   `read_window_text`, `capture_region`, `capture_window`, `list_displays`,
-  `read_clipboard`) always mounted, and **act** (`clipboard_write`, `type_text`,
-  `click`, `focus_window`) merged in **only when `allow_act` is true** — so with
-  the gate off the act tools are absent from `tools/list` and uncallable (the
-  anti-prompt-injection guarantee). `Vantage::new(..., input, allow_act)` builds
-  the router; `#[tool_handler(router = self.tool_router)]` serves it. The two
-  capture tools share `parse_mode`/`clamp_max_dim`/`frame_to_output` (OCR +
-  downscale + PNG); act tools share `AckOutput`. `main.rs` resolves the gate once
-  (`act_enabled`: `--allow-act` flag or `VANTAGE_ALLOW_ACT`) and selects the
+  `read_clipboard`) always mounted, and **act** (`write_clipboard`, `type_text`,
+  `click`, `move_mouse`, `key_press`, `focus_window` — the six `ACT_TOOL_NAMES`)
+  merged in **per-tool** — each is dropped from the act router via `remove_route`
+  unless it is in `allowed_act`. With the gate off (empty `allowed_act`) the act
+  tools are absent from `tools/list` and uncallable (the anti-prompt-injection
+  guarantee). `Vantage::new(..., input, allowed_act: Vec<String>)` builds the
+  router; `#[tool_handler(router = self.tool_router)]` serves it. The two capture
+  tools share `parse_mode`/`clamp_max_dim`/`frame_to_output` (OCR + downscale +
+  PNG); act tools share `AckOutput`. `main.rs` resolves the allowed set once
+  (`act_tools`: `VANTAGE_ACT_TOOLS`/`--act-tools=<csv>` subset, else
+  `--allow-act`/`VANTAGE_ALLOW_ACT` = all) and selects the
   backend by `cfg(target_os)` (`compile_error!` on unsupported OSes) and calls
   `backend::backends()` — it never names a concrete `Mac*`/`Linux*` type. The
   server forwards `capture`/`ocr` features to the Linux crate, so

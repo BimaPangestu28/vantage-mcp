@@ -35,8 +35,8 @@ keeps token cost low for the common case; ask for `output: "image"` or
   image as base64 PNG).
 
 **Act tools** (write/side-effecting) are **disabled by default** and gated —
-see [Act tools](#act-tools-gated): `clipboard_write`, `type_text`, `click`,
-`focus_window`.
+see [Act tools](#act-tools-gated): `write_clipboard`, `type_text`, `click`,
+`move_mouse`, `key_press`, `focus_window`.
 
 ## Prerequisites
 
@@ -139,15 +139,22 @@ scale_factor, is_primary }, ...] }`.
 Act tools **write** / cause side effects, so they are **off by default and
 structurally isolated**: unless the operator opts in, they are not mounted —
 absent from `tools/list` and uncallable, so a prompt-injection cannot reach
-them. Enable them by launching the binary with the `--allow-act` flag **or**
-setting `VANTAGE_ALLOW_ACT=1` (`true`/`yes` also accepted). On enable, a warning
-is logged to stderr.
+them.
+
+**Enabling.** Launch with `--allow-act` **or** `VANTAGE_ALLOW_ACT=1`
+(`true`/`yes` accepted) to mount **all** act tools. To mount only a **subset**,
+list them (comma-separated) via `VANTAGE_ACT_TOOLS=write_clipboard,click` or
+`--act-tools=write_clipboard,click` — a subset list wins over the all-switch, and
+unknown names are warned and ignored. On enable, a warning naming the mounted act
+tools is logged to stderr.
 
 | tool | params | notes |
 |---|---|---|
-| `clipboard_write` | `{ text }` | set the system clipboard (macOS + Linux X11/Wayland) |
+| `write_clipboard` | `{ text?, image? }` | set the clipboard (≥1 required; `image` is base64 PNG). macOS + Linux X11/Wayland |
 | `type_text` | `{ text }` | synthetic keystrokes; macOS + Linux/X11 (XWayland). Native Wayland injection is compositor-restricted → actionable error |
-| `click` | `{ x, y, button? }` | mouse click at absolute coords; `button` is `"left"` (default)/`"right"`/`"middle"`. Same platform notes as `type_text` |
+| `click` | `{ x, y, button?, double? }` | click at absolute coords; `button` = `"left"` (default)/`"right"`/`"middle"`; `double` for double-click. Same platform notes as `type_text` |
+| `move_mouse` | `{ x, y }` | move the pointer. Same platform notes as `type_text` |
+| `key_press` | `{ keys }` | key combo, e.g. `"ctrl+shift+t"`, `"cmd+c"`, `"enter"`, `"f5"`. Same platform notes as `type_text` |
 | `focus_window` | `{ window_id }` | raise/focus a window (from `list_windows`). Linux via AT-SPI (X11 + Wayland); macOS activates the owning app |
 
 Each returns `{ ok: true }` on success. Every act call is logged to stderr for

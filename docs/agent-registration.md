@@ -79,11 +79,13 @@ Restart Claude Desktop for the change to take effect.
 
 ## 3b. Enabling act tools (optional, off by default)
 
-By default `vantage-mcp` serves only read tools. The act tools
-(`clipboard_write`, `type_text`, `click`, `focus_window`) cause side effects and
-are **not mounted** unless you explicitly opt in — they won't even appear in
-`tools/list`. Enable them with the `--allow-act` flag **or** the
-`VANTAGE_ALLOW_ACT=1` environment variable:
+By default `vantage-mcp` serves only read tools. The six act tools
+(`write_clipboard`, `type_text`, `click`, `move_mouse`, `key_press`,
+`focus_window`) cause side effects and are **not mounted** unless you explicitly
+opt in — they won't even appear in `tools/list`. Enable **all** of them with the
+`--allow-act` flag **or** the `VANTAGE_ALLOW_ACT=1` environment variable, or mount
+only a **subset** with `VANTAGE_ACT_TOOLS=write_clipboard,click` (or
+`--act-tools=write_clipboard,click`):
 
 ```json
 {
