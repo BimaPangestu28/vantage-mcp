@@ -7,8 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use vantage_core::{
-    Bounds, ClipboardAccess, ClipboardKind, ClipboardPrefer, ScreenCapturer, TextRecognizer,
-    WindowFilter, WindowInfo, WindowInspector, WindowText,
+    Bounds, ClipboardAccess, ClipboardKind, ClipboardPrefer, DisplayInfo, ScreenCapturer,
+    TextRecognizer, WindowFilter, WindowInfo, WindowInspector, WindowText,
 };
 
 use crate::error_map::to_mcp_error;
@@ -83,6 +83,13 @@ pub struct ClipboardOutput {
 pub struct ListWindowsResult {
     /// The matching windows, in the backend's native ordering.
     pub windows: Vec<WindowInfo>,
+}
+
+/// Object wrapper around the display list (rmcp requires an object outputSchema
+/// root — see `ListWindowsResult`).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListDisplaysResult {
+    pub displays: Vec<DisplayInfo>,
 }
 
 /// The MCP server handler. Holds injected, platform-agnostic backends used
@@ -239,6 +246,17 @@ impl Vantage {
             text: content.text,
             image,
         }))
+    }
+
+    /// List connected displays: id, name, bounds, scale factor, and which is primary.
+    #[tool(description = "List connected displays (id, name, bounds, scale, primary).")]
+    pub async fn list_displays(&self) -> Result<Json<ListDisplaysResult>, ErrorData> {
+        let capturer = self.capturer.clone();
+        let displays = tokio::task::spawn_blocking(move || capturer.list_displays())
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+        Ok(Json(ListDisplaysResult { displays }))
     }
 }
 
@@ -565,5 +583,42 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.message.to_lowercase().contains("prefer"));
+    }
+
+    #[tokio::test]
+    async fn list_displays_returns_displays_from_backend() {
+        struct TwoDisplays;
+        impl ScreenCapturer for TwoDisplays {
+            fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+            fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+                Ok(vec![vantage_core::DisplayInfo {
+                    display_id: 7,
+                    name: "HDMI-1".into(),
+                    bounds: Bounds {
+                        x: 0,
+                        y: 0,
+                        width: 800,
+                        height: 600,
+                    },
+                    scale_factor: 1.0,
+                    is_primary: true,
+                }])
+            }
+            fn capture_window(&self, _t: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+        }
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(TwoDisplays),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+        );
+        let out = vantage.list_displays().await.expect("ok");
+        assert_eq!(out.0.displays.len(), 1);
+        assert_eq!(out.0.displays[0].name, "HDMI-1");
+        assert!(out.0.displays[0].is_primary);
     }
 }
