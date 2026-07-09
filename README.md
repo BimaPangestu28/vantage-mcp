@@ -174,6 +174,20 @@ stdout carries **only** JSON-RPC — nothing else is ever written there. All
 logging goes to stderr via `tracing`. If you see anything on stdout that
 isn't a JSON-RPC message, that's a bug: file an issue.
 
+## Agent (DeepSeek)
+
+`crates/agent` (`vantage-agent`) is a ready-to-run example client: a DeepSeek
+agent that drives these tools over MCP. It spawns this server, exposes its tools
+to `deepseek-chat`, and runs a tool-calling loop — one-shot or interactive REPL,
+read tools free, act tools gated + confirmed. See
+[crates/agent/README.md](crates/agent/README.md).
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+make build
+cargo run -p vantage-agent -- "which windows are open, and which is focused?"
+```
+
 ## Roadmap
 
 This build covers, on **macOS and Linux** (Linux via AT-SPI for windows/text,

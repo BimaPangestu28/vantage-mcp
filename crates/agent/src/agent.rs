@@ -48,7 +48,7 @@ impl Agent {
         let args: Value = serde_json::from_str(&tc.function.arguments)
             .unwrap_or(Value::Object(Default::default()));
 
-        if is_act_tool(name) && !confirm(name, &args, self.auto_yes, self.is_tty, |p| read_yes(p)) {
+        if is_act_tool(name) && !confirm(name, &args, self.auto_yes, self.is_tty, read_yes) {
             eprintln!("  \u{21b3} refused act tool `{name}`");
             return "{\"refused\":true,\"reason\":\"not confirmed by user\"}".into();
         }
