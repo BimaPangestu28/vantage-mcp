@@ -295,6 +295,12 @@ mod tests {
         fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
             Err(CaptureError::Unsupported("mock".into()))
         }
+        fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn capture_window(&self, _t: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
     }
     pub(crate) struct NoOcr;
     impl TextRecognizer for NoOcr {
@@ -418,6 +424,12 @@ mod tests {
                     pixels: vec![0u8; 16],
                 })
             }
+            fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+            fn capture_window(&self, _t: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
         }
         struct FakeOcr;
         impl TextRecognizer for FakeOcr {
@@ -460,6 +472,12 @@ mod tests {
                     height,
                     pixels: vec![0u8; (width * height * 4) as usize],
                 })
+            }
+            fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+            fn capture_window(&self, _t: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
             }
         }
         let vantage = Vantage::new(

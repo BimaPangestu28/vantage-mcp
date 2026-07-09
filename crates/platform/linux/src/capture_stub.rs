@@ -1,7 +1,7 @@
 //! Stub `ScreenCapturer` used when the `capture` feature is disabled (i.e. the
 //! crate was built without the xcap system libraries). Returns an actionable
 //! `Unsupported` error rather than silently producing empty captures.
-use vantage_core::{Bounds, CaptureError, RgbaImage, ScreenCapturer};
+use vantage_core::{Bounds, CaptureError, DisplayInfo, RgbaImage, ScreenCapturer, WindowInfo};
 
 pub struct LinuxScreenCapturer;
 
@@ -19,6 +19,22 @@ impl Default for LinuxScreenCapturer {
 
 impl ScreenCapturer for LinuxScreenCapturer {
     fn capture_region(&self, _bounds: Bounds) -> Result<RgbaImage, CaptureError> {
+        Err(CaptureError::Unsupported(
+            "screen capture was disabled at build time (the `capture` feature / xcap \
+             system libraries were unavailable)"
+                .into(),
+        ))
+    }
+
+    fn list_displays(&self) -> Result<Vec<DisplayInfo>, CaptureError> {
+        Err(CaptureError::Unsupported(
+            "display enumeration was disabled at build time (the `capture` feature / xcap \
+             system libraries were unavailable)"
+                .into(),
+        ))
+    }
+
+    fn capture_window(&self, _target: &WindowInfo) -> Result<RgbaImage, CaptureError> {
         Err(CaptureError::Unsupported(
             "screen capture was disabled at build time (the `capture` feature / xcap \
              system libraries were unavailable)"
