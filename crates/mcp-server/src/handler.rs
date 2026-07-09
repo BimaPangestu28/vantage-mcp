@@ -22,6 +22,16 @@ pub const DEFAULT_DEPTH: u32 = 20;
 /// regardless of what the caller requests.
 pub const MAX_DEPTH: u32 = 50;
 
+/// The names of the act tools, for gate validation + selective mounting.
+pub const ACT_TOOL_NAMES: [&str; 6] = [
+    "write_clipboard",
+    "type_text",
+    "click",
+    "focus_window",
+    "move_mouse",
+    "key_press",
+];
+
 /// What a capture tool should return: OCR text, a downscaled PNG, or both.
 /// Shared by `capture_region` and `capture_window`.
 #[derive(PartialEq, Clone, Copy)]
@@ -234,11 +244,19 @@ impl Vantage {
         ocr: Arc<dyn TextRecognizer>,
         clipboard: Arc<dyn ClipboardAccess>,
         input: Arc<dyn InputController>,
-        allow_act: bool,
+        allowed_act: Vec<String>,
     ) -> Self {
         let mut tool_router = Self::read_tool_router();
-        if allow_act {
-            tool_router.merge(Self::act_tool_router());
+        if !allowed_act.is_empty() {
+            // Build the full act router, then drop any tool the operator did not
+            // enable, so only the selected act tools are mounted.
+            let mut act = Self::act_tool_router();
+            for name in ACT_TOOL_NAMES {
+                if !allowed_act.iter().any(|a| a == name) {
+                    act.remove_route(name);
+                }
+            }
+            tool_router.merge(act);
         }
         Self {
             windows,
@@ -655,7 +673,14 @@ mod tests {
         ocr: Arc<dyn TextRecognizer>,
         clipboard: Arc<dyn ClipboardAccess>,
     ) -> Vantage {
-        Vantage::new(windows, capturer, ocr, clipboard, Arc::new(NoInput), false)
+        Vantage::new(
+            windows,
+            capturer,
+            ocr,
+            clipboard,
+            Arc::new(NoInput),
+            Vec::new(),
+        )
     }
 
     pub(crate) fn vantage_with_windows(windows: Arc<MockWindows>) -> Vantage {
@@ -1017,32 +1042,40 @@ mod tests {
         assert!(err.message.contains("999"));
     }
 
-    fn vantage_gated(allow_act: bool) -> Vantage {
+    fn all_act() -> Vec<String> {
+        ACT_TOOL_NAMES.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn vantage_gated(allowed: &[&str]) -> Vantage {
         Vantage::new(
             Arc::new(MockWindows::default()),
             Arc::new(NoScreen),
             Arc::new(NoOcr),
             Arc::new(NoClip),
             Arc::new(NoInput),
-            allow_act,
+            allowed.iter().map(|s| s.to_string()).collect(),
         )
     }
 
     #[test]
-    fn act_tools_absent_when_gate_off_present_when_on() {
-        let off = vantage_gated(false);
-        assert!(
-            !off.tool_router.has_route("write_clipboard"),
-            "act tool must be unmounted when the gate is off"
-        );
-        // Read tools are always mounted.
+    fn act_gate_mounts_only_allowed_tools() {
+        // Off: no act tool mounted; read tools always mounted.
+        let off = vantage_gated(&[]);
+        assert!(!off.tool_router.has_route("write_clipboard"));
         assert!(off.tool_router.has_route("list_windows"));
 
-        let on = vantage_gated(true);
-        assert!(
-            on.tool_router.has_route("write_clipboard"),
-            "act tool must be mounted when the gate is on"
-        );
+        // Subset: only the named act tools mounted.
+        let subset = vantage_gated(&["write_clipboard", "click"]);
+        assert!(subset.tool_router.has_route("write_clipboard"));
+        assert!(subset.tool_router.has_route("click"));
+        assert!(!subset.tool_router.has_route("key_press"));
+        assert!(!subset.tool_router.has_route("type_text"));
+
+        // All: every act tool mounted.
+        let on = vantage_gated(&ACT_TOOL_NAMES);
+        for n in ACT_TOOL_NAMES {
+            assert!(on.tool_router.has_route(n), "{n} should be mounted");
+        }
     }
 
     #[tokio::test]
@@ -1087,7 +1120,7 @@ mod tests {
             Arc::new(NoOcr),
             Arc::new(NoClip),
             rec.clone(),
-            true,
+            all_act(),
         );
         let out = vantage
             .write_clipboard(Parameters(WriteClipboardParams {
@@ -1115,7 +1148,7 @@ mod tests {
 
     #[tokio::test]
     async fn focus_window_unknown_id_errors() {
-        let vantage = vantage_gated(true);
+        let vantage = vantage_gated(&ACT_TOOL_NAMES);
         let result = vantage
             .focus_window(Parameters(FocusWindowParams { window_id: 424242 }))
             .await;
@@ -1177,7 +1210,7 @@ mod tests {
             Arc::new(NoOcr),
             Arc::new(NoClip),
             rec.clone(),
-            true,
+            all_act(),
         );
         vantage
             .type_text(Parameters(TypeTextParams {
