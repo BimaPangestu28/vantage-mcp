@@ -77,3 +77,15 @@ make build && cargo test -p vantage-agent --test mcp_live -- --ignored   # live 
 
 The full DeepSeek loop needs a valid `DEEPSEEK_API_KEY` — run a one-shot task to
 exercise it end to end.
+
+## Known issue
+
+On exit you may see a benign `thread 'main' panicked … Cannot drop a runtime …`
+message on **stderr**. It comes from rmcp's child-process transport reaping the
+server during runtime teardown (upstream `rmcp`/`process-wrap`), happens *after*
+the answer is printed, and does not affect the result or the exit code (0). The
+answer is written to **stdout**, so `2>/dev/null` gives clean output:
+
+```bash
+cargo run -q -p vantage-agent -- "which app is focused?" 2>/dev/null
+```
