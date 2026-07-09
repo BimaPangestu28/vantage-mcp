@@ -111,7 +111,9 @@ impl ScreenCapturer for LinuxScreenCapturer {
             })
             .or_else(|| matches.first())
             .ok_or(CaptureError::WindowNotFound(target.window_id))?;
-        let shot = win.capture_image().map_err(|e| classify_capture_error(&e))?;
+        let shot = win
+            .capture_image()
+            .map_err(|e| classify_capture_error(&e))?;
         Ok(RgbaImage {
             width: shot.width(),
             height: shot.height(),

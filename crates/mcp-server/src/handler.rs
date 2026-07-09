@@ -719,7 +719,12 @@ mod tests {
             windows: vec![win(1, "Safari", "A")],
             ..Default::default()
         });
-        let vantage = Vantage::new(mock, Arc::new(WinScreen), Arc::new(FakeOcr2), Arc::new(NoClip));
+        let vantage = Vantage::new(
+            mock,
+            Arc::new(WinScreen),
+            Arc::new(FakeOcr2),
+            Arc::new(NoClip),
+        );
         let out = vantage
             .capture_window(Parameters(CaptureWindowParams {
                 window_id: 1,
