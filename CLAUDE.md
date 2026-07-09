@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `vantage-mcp` is a Model Context Protocol (MCP) server that gives an LLM agent
-**read-only** access to the desktop over stdio: enumerate windows, read a
-window's accessibility text, capture a screen region (OCR text or image), and
-read the clipboard. This is the read slice on **macOS and Linux** (X11 +
+**read-only** access to the desktop over stdio: enumerate windows and displays,
+read a window's accessibility text, capture a screen region or a whole window
+(OCR text or image), and read the clipboard. This is the read slice on **macOS and Linux** (X11 +
 Wayland), **no "act" tools** (no typing/clicking/clipboard writes). See
 `PRD-desktop-capture-mcp.md` and `docs/superpowers/specs/` /
 `docs/superpowers/plans/` for the full spec and task plans; `README.md`
@@ -43,11 +43,13 @@ Four-crate Cargo workspace with a strict dependency direction —
 `core ← platform/{macos,linux} ← mcp-server`:
 
 - **`crates/core`** (`vantage_core`) — platform-agnostic contract. Defines the
-  four capability **traits** (`WindowInspector`, `ScreenCapturer`,
+  four capability **traits** (`WindowInspector`, `ScreenCapturer` — which now
+  covers `capture_region`, `capture_window`, and `list_displays` —
   `TextRecognizer`, `ClipboardAccess` in `traits.rs`), the value **types**
-  (`types.rs`), and the domain error enum `CaptureError` + its coarse
-  `ErrorKind` (`error.rs`). No OS dependencies. **Frozen contract** — both
-  platform backends implement exactly these traits; don't change it lightly.
+  (`types.rs`, incl. `DisplayInfo`), and the domain error enum `CaptureError` +
+  its coarse `ErrorKind` (`error.rs`). No OS dependencies. **Near-frozen
+  contract** — both platform backends implement exactly these traits; extend it
+  only deliberately (as Spec B did), updating every backend + mock together.
 
 - **`crates/platform/macos`** (`vantage_platform_macos`) — the `Mac*` structs,
   one file per capability: `windows.rs` (CGWindowList + AXUIElement), `capture.rs`
@@ -68,7 +70,10 @@ Four-crate Cargo workspace with a strict dependency direction —
 
 - **`crates/mcp-server`** (bin `vantage-mcp`) — the MCP/JSON-RPC layer, built
   on `rmcp` 2.1.0. `handler.rs` holds `Vantage`, which stores the four backends
-  as `Arc<dyn Trait>` and exposes the `#[tool]` methods. `main.rs` selects the
+  as `Arc<dyn Trait>` and exposes the six `#[tool]` methods (`list_windows`,
+  `read_window_text`, `capture_region`, `capture_window`, `list_displays`,
+  `read_clipboard`); the two capture tools share `parse_mode`/`clamp_max_dim`/
+  `frame_to_output` (the OCR + downscale + PNG pipeline). `main.rs` selects the
   backend by `cfg(target_os)` (`compile_error!` on unsupported OSes) and calls
   `backend::backends()` — it never names a concrete `Mac*`/`Linux*` type. The
   server forwards `capture`/`ocr` features to the Linux crate, so

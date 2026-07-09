@@ -21,11 +21,16 @@ keeps token cost low for the common case; ask for `output: "image"` or
 
 - `list_windows` — enumerate on-screen windows (id, owning app, title,
   bounds, focus state).
-- `read_window_text` — read a window's content via the macOS accessibility
-  (AX) tree. Cheapest way to get a window's content; prefer this over a
-  screenshot + OCR round trip.
+- `read_window_text` — read a window's content via the platform accessibility
+  API (macOS AX / Linux AT-SPI). Cheapest way to get a window's content; prefer
+  this over a screenshot + OCR round trip.
 - `capture_region` — capture a screen region; defaults to OCR text only, can
   optionally also/instead return a downscaled base64 PNG.
+- `capture_window` — capture one window by id (from `list_windows`), same
+  text-first output as `capture_region`. macOS and Linux/X11; on Linux/Wayland
+  returns an actionable error (compositors don't allow per-window capture).
+- `list_displays` — enumerate connected monitors (id, name, bounds, scale
+  factor, primary).
 - `read_clipboard` — read the system clipboard (text by default, or an
   image as base64 PNG).
 
@@ -106,6 +111,25 @@ Returns `{ text, truncated }`. Requires Accessibility permission.
 Returns `{ text, image }` (`image` is a base64-encoded PNG, present only
 when `output` includes an image). Requires Screen Recording permission.
 
+**`capture_window`**
+
+| param | type | default | description |
+|---|---|---|---|
+| `window_id` | integer | — (required) | a `window_id` from `list_windows` |
+| `output` | `"text"` \| `"image"` \| `"both"`, optional | `"text"` | what to return |
+| `max_dimension` | integer, optional | `1024` | cap on the image's longest side (always enforced) |
+
+Returns `{ text, image }`, same shape as `capture_region`. macOS and Linux/X11;
+on Linux/Wayland returns an actionable error (per-window capture isn't permitted
+by the compositor — use `capture_region` there). Roughly equivalent to
+`list_windows` → take `bounds` → `capture_region`, but grabs the true window
+(handles occlusion / off-screen).
+
+**`list_displays`**
+
+Takes no parameters. Returns `{ displays: [{ display_id, name, bounds,
+scale_factor, is_primary }, ...] }`.
+
 **`read_clipboard`**
 
 | param | type | default | description |
@@ -124,10 +148,9 @@ isn't a JSON-RPC message, that's a bug: file an issue.
 
 This build covers the read slice on **macOS and Linux** (Linux via AT-SPI for
 windows/text, xcap for capture on X11 and Wayland, Tesseract for OCR, arboard
-for clipboard). Later phases, not yet implemented:
+for clipboard), plus window-level capture and display enumeration
+(`capture_window`, `list_displays`). Later phases, not yet implemented:
 
-- **Full image-output surface** — richer capture options (e.g. window-level
-  capture, multi-display listing) beyond the current region capture. *(Spec B)*
 - **Gated act tools** — clipboard write, type, click, focus — behind an
   explicit policy gate and disabled by default, kept structurally separate
   from the read tools to avoid prompt-injection-driven side effects. On Linux

@@ -8,7 +8,7 @@
 //! (Wayland fractional scaling, GNOME 200%, …) the point-space region is scaled
 //! into pixel space before indexing the buffer.
 
-use vantage_core::{Bounds, CaptureError, RgbaImage, ScreenCapturer};
+use vantage_core::{Bounds, CaptureError, DisplayInfo, RgbaImage, ScreenCapturer, WindowInfo};
 use xcap::Monitor;
 
 pub struct LinuxScreenCapturer;
@@ -59,6 +59,65 @@ impl ScreenCapturer for LinuxScreenCapturer {
             width: crop_w,
             height: crop_h,
             pixels: cropped.into_raw(),
+        })
+    }
+
+    fn list_displays(&self) -> Result<Vec<DisplayInfo>, CaptureError> {
+        let monitors = Monitor::all().map_err(|e| classify_capture_error(&e))?;
+        Ok(monitors
+            .into_iter()
+            .map(|m| DisplayInfo {
+                display_id: m.id().unwrap_or(0),
+                name: m.name().unwrap_or_default(),
+                bounds: Bounds {
+                    x: m.x().unwrap_or(0),
+                    y: m.y().unwrap_or(0),
+                    width: m.width().unwrap_or(0),
+                    height: m.height().unwrap_or(0),
+                },
+                scale_factor: m.scale_factor().unwrap_or(1.0),
+                is_primary: m.is_primary().unwrap_or(false),
+            })
+            .collect())
+    }
+
+    fn capture_window(&self, target: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+        // Wayland compositors do not permit capturing arbitrary application
+        // windows; refuse before touching xcap so we never grab a wrong region.
+        let is_wayland = std::env::var("XDG_SESSION_TYPE")
+            .map(|v| v.eq_ignore_ascii_case("wayland"))
+            .unwrap_or(false)
+            || std::env::var("WAYLAND_DISPLAY").is_ok();
+        if is_wayland {
+            return Err(CaptureError::Unsupported(
+                "per-window capture is not available on Wayland; use capture_region with a \
+                 display/region, or run under X11"
+                    .into(),
+            ));
+        }
+        let windows = xcap::Window::all().map_err(|e| classify_capture_error(&e))?;
+        let matches: Vec<xcap::Window> = windows
+            .into_iter()
+            .filter(|w| {
+                w.app_name().map(|a| a == target.app).unwrap_or(false)
+                    && w.title().map(|t| t == target.title).unwrap_or(false)
+            })
+            .collect();
+        let win = matches
+            .iter()
+            .find(|w| {
+                w.x().unwrap_or(i32::MIN) == target.bounds.x
+                    && w.y().unwrap_or(i32::MIN) == target.bounds.y
+            })
+            .or_else(|| matches.first())
+            .ok_or(CaptureError::WindowNotFound(target.window_id))?;
+        let shot = win
+            .capture_image()
+            .map_err(|e| classify_capture_error(&e))?;
+        Ok(RgbaImage {
+            width: shot.width(),
+            height: shot.height(),
+            pixels: shot.into_raw(),
         })
     }
 }

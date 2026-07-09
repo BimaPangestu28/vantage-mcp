@@ -4,7 +4,7 @@
 //! top-left corner, then crops to the exact region in monitor-local
 //! coordinates.
 
-use vantage_core::{Bounds, CaptureError, RgbaImage, ScreenCapturer};
+use vantage_core::{Bounds, CaptureError, DisplayInfo, RgbaImage, ScreenCapturer, WindowInfo};
 use xcap::Monitor;
 
 pub struct MacScreenCapturer;
@@ -61,6 +61,53 @@ impl ScreenCapturer for MacScreenCapturer {
             width: crop_w,
             height: crop_h,
             pixels: cropped.into_raw(),
+        })
+    }
+
+    fn list_displays(&self) -> Result<Vec<DisplayInfo>, CaptureError> {
+        let monitors = Monitor::all().map_err(|e| classify_capture_error(&e))?;
+        Ok(monitors
+            .into_iter()
+            .map(|m| DisplayInfo {
+                display_id: m.id().unwrap_or(0),
+                name: m.name().unwrap_or_default(),
+                bounds: Bounds {
+                    x: m.x().unwrap_or(0),
+                    y: m.y().unwrap_or(0),
+                    width: m.width().unwrap_or(0),
+                    height: m.height().unwrap_or(0),
+                },
+                scale_factor: m.scale_factor().unwrap_or(1.0),
+                is_primary: m.is_primary().unwrap_or(false),
+            })
+            .collect())
+    }
+
+    fn capture_window(&self, target: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+        // xcap's macOS `Window::id()` is the CGWindowID that our `window_id`
+        // already holds, so match on it directly. (If that ever proves false,
+        // fall back to matching app_name()+title().)
+        let windows = xcap::Window::all().map_err(|e| classify_capture_error(&e))?;
+        let win = windows
+            .into_iter()
+            .find(|w| w.id().map(|id| id == target.window_id).unwrap_or(false))
+            .or_else(|| {
+                // Fallback: match by owning app + title.
+                xcap::Window::all().ok().and_then(|ws| {
+                    ws.into_iter().find(|w| {
+                        w.app_name().map(|a| a == target.app).unwrap_or(false)
+                            && w.title().map(|t| t == target.title).unwrap_or(false)
+                    })
+                })
+            })
+            .ok_or(CaptureError::WindowNotFound(target.window_id))?;
+        let shot = win
+            .capture_image()
+            .map_err(|e| classify_capture_error(&e))?;
+        Ok(RgbaImage {
+            width: shot.width(),
+            height: shot.height(),
+            pixels: shot.into_raw(),
         })
     }
 }

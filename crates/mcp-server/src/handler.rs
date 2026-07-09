@@ -7,8 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use vantage_core::{
-    Bounds, ClipboardAccess, ClipboardKind, ClipboardPrefer, ScreenCapturer, TextRecognizer,
-    WindowFilter, WindowInfo, WindowInspector, WindowText,
+    Bounds, ClipboardAccess, ClipboardKind, ClipboardPrefer, DisplayInfo, ScreenCapturer,
+    TextRecognizer, WindowFilter, WindowInfo, WindowInspector, WindowText,
 };
 
 use crate::error_map::to_mcp_error;
@@ -20,6 +20,57 @@ pub const DEFAULT_DEPTH: u32 = 20;
 /// Hard cap on accessibility-tree walk depth for `read_window_text`,
 /// regardless of what the caller requests.
 pub const MAX_DEPTH: u32 = 50;
+
+/// What a capture tool should return: OCR text, a downscaled PNG, or both.
+/// Shared by `capture_region` and `capture_window`.
+#[derive(PartialEq, Clone, Copy)]
+enum CaptureMode {
+    Text,
+    Image,
+    Both,
+}
+
+/// Parse the `output` parameter accepted by the capture tools.
+fn parse_mode(output: Option<&str>) -> Result<CaptureMode, ErrorData> {
+    match output {
+        None | Some("text") => Ok(CaptureMode::Text),
+        Some("image") => Ok(CaptureMode::Image),
+        Some("both") => Ok(CaptureMode::Both),
+        Some(other) => Err(ErrorData::invalid_params(
+            format!("output must be \"text\", \"image\", or \"both\", got {other:?}"),
+            None,
+        )),
+    }
+}
+
+/// Clamp/normalize the `max_dimension` parameter (0/absent → default cap).
+fn clamp_max_dim(max_dimension: Option<u32>) -> u32 {
+    match max_dimension {
+        None | Some(0) => DEFAULT_MAX_DIMENSION,
+        Some(n) => n.min(DEFAULT_MAX_DIMENSION),
+    }
+}
+
+/// Turn a captured frame into text-first `CaptureOutput` per `mode`, running OCR
+/// and/or downscaling + PNG-encoding as needed. Shared by both capture tools.
+fn frame_to_output(
+    frame: vantage_core::RgbaImage,
+    mode: CaptureMode,
+    max_dim: u32,
+    ocr: &std::sync::Arc<dyn TextRecognizer>,
+) -> Result<CaptureOutput, vantage_core::CaptureError> {
+    let text = if mode != CaptureMode::Image {
+        Some(ocr.recognize(&frame)?)
+    } else {
+        None
+    };
+    let image = if mode != CaptureMode::Text {
+        Some(rgba_to_base64_png(&downscale(&frame, max_dim)?)?)
+    } else {
+        None
+    };
+    Ok(CaptureOutput { text, image })
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListWindowsParams {
@@ -43,6 +94,18 @@ pub struct ReadWindowTextParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CaptureRegionParams {
     pub bounds: Bounds,
+    /// "text" (default, OCR only, no pixels), "image", or "both".
+    #[serde(default)]
+    pub output: Option<String>,
+    /// Cap the largest image side. Defaults to 1024; always enforced.
+    #[serde(default)]
+    pub max_dimension: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CaptureWindowParams {
+    /// Target window id (from list_windows).
+    pub window_id: u32,
     /// "text" (default, OCR only, no pixels), "image", or "both".
     #[serde(default)]
     pub output: Option<String>,
@@ -83,6 +146,13 @@ pub struct ClipboardOutput {
 pub struct ListWindowsResult {
     /// The matching windows, in the backend's native ordering.
     pub windows: Vec<WindowInfo>,
+}
+
+/// Object wrapper around the display list (rmcp requires an object outputSchema
+/// root — see `ListWindowsResult`).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListDisplaysResult {
+    pub displays: Vec<DisplayInfo>,
 }
 
 /// The MCP server handler. Holds injected, platform-agnostic backends used
@@ -162,50 +232,54 @@ impl Vantage {
         &self,
         Parameters(params): Parameters<CaptureRegionParams>,
     ) -> Result<Json<CaptureOutput>, ErrorData> {
-        #[derive(PartialEq)]
-        enum Mode {
-            Text,
-            Image,
-            Both,
-        }
-        let mode = match params.output.as_deref() {
-            None | Some("text") => Mode::Text,
-            Some("image") => Mode::Image,
-            Some("both") => Mode::Both,
-            Some(other) => {
-                return Err(ErrorData::invalid_params(
-                    format!("output must be \"text\", \"image\", or \"both\", got {other:?}"),
-                    None,
-                ))
-            }
-        };
-        let max_dim = match params.max_dimension {
-            None | Some(0) => DEFAULT_MAX_DIMENSION,
-            Some(n) => n.min(DEFAULT_MAX_DIMENSION),
-        };
+        let mode = parse_mode(params.output.as_deref())?;
+        let max_dim = clamp_max_dim(params.max_dimension);
         let bounds = params.bounds;
         let capturer = self.capturer.clone();
         let ocr = self.ocr.clone();
 
-        let (text, image) = tokio::task::spawn_blocking(move || {
+        let out = tokio::task::spawn_blocking(move || {
             let frame = capturer.capture_region(bounds)?;
-            let text = if mode != Mode::Image {
-                Some(ocr.recognize(&frame)?)
-            } else {
-                None
-            };
-            let image = if mode != Mode::Text {
-                Some(rgba_to_base64_png(&downscale(&frame, max_dim)?)?)
-            } else {
-                None
-            };
-            Ok::<_, vantage_core::CaptureError>((text, image))
+            frame_to_output(frame, mode, max_dim, &ocr)
         })
         .await
         .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
         .map_err(to_mcp_error)?;
 
-        Ok(Json(CaptureOutput { text, image }))
+        Ok(Json(out))
+    }
+
+    /// Capture a single window by id (from `list_windows`). Text-first like
+    /// `capture_region`. Not available on Wayland (returns an actionable error).
+    #[tool(description = "Capture one window by id; defaults to OCR text (no image).")]
+    pub async fn capture_window(
+        &self,
+        Parameters(params): Parameters<CaptureWindowParams>,
+    ) -> Result<Json<CaptureOutput>, ErrorData> {
+        let mode = parse_mode(params.output.as_deref())?;
+        let max_dim = clamp_max_dim(params.max_dimension);
+        let window_id = params.window_id;
+        let windows = self.windows.clone();
+        let capturer = self.capturer.clone();
+        let ocr = self.ocr.clone();
+
+        let out = tokio::task::spawn_blocking(move || {
+            let target = windows
+                .list_windows(WindowFilter {
+                    app_filter: None,
+                    on_screen_only: false,
+                })?
+                .into_iter()
+                .find(|w| w.window_id == window_id)
+                .ok_or(vantage_core::CaptureError::WindowNotFound(window_id))?;
+            let frame = capturer.capture_window(&target)?;
+            frame_to_output(frame, mode, max_dim, &ocr)
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+        .map_err(to_mcp_error)?;
+
+        Ok(Json(out))
     }
 
     /// Read the system clipboard. Defaults to preferring text.
@@ -239,6 +313,17 @@ impl Vantage {
             text: content.text,
             image,
         }))
+    }
+
+    /// List connected displays: id, name, bounds, scale factor, and which is primary.
+    #[tool(description = "List connected displays (id, name, bounds, scale, primary).")]
+    pub async fn list_displays(&self) -> Result<Json<ListDisplaysResult>, ErrorData> {
+        let capturer = self.capturer.clone();
+        let displays = tokio::task::spawn_blocking(move || capturer.list_displays())
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+        Ok(Json(ListDisplaysResult { displays }))
     }
 }
 
@@ -293,6 +378,12 @@ mod tests {
     pub(crate) struct NoScreen;
     impl ScreenCapturer for NoScreen {
         fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn capture_window(&self, _t: &WindowInfo) -> Result<RgbaImage, CaptureError> {
             Err(CaptureError::Unsupported("mock".into()))
         }
     }
@@ -418,6 +509,12 @@ mod tests {
                     pixels: vec![0u8; 16],
                 })
             }
+            fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+            fn capture_window(&self, _t: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
         }
         struct FakeOcr;
         impl TextRecognizer for FakeOcr {
@@ -460,6 +557,12 @@ mod tests {
                     height,
                     pixels: vec![0u8; (width * height * 4) as usize],
                 })
+            }
+            fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+            fn capture_window(&self, _t: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
             }
         }
         let vantage = Vantage::new(
@@ -547,5 +650,112 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.message.to_lowercase().contains("prefer"));
+    }
+
+    #[tokio::test]
+    async fn list_displays_returns_displays_from_backend() {
+        struct TwoDisplays;
+        impl ScreenCapturer for TwoDisplays {
+            fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+            fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+                Ok(vec![vantage_core::DisplayInfo {
+                    display_id: 7,
+                    name: "HDMI-1".into(),
+                    bounds: Bounds {
+                        x: 0,
+                        y: 0,
+                        width: 800,
+                        height: 600,
+                    },
+                    scale_factor: 1.0,
+                    is_primary: true,
+                }])
+            }
+            fn capture_window(&self, _t: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+        }
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(TwoDisplays),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+        );
+        let out = vantage.list_displays().await.expect("ok");
+        assert_eq!(out.0.displays.len(), 1);
+        assert_eq!(out.0.displays[0].name, "HDMI-1");
+        assert!(out.0.displays[0].is_primary);
+    }
+
+    #[tokio::test]
+    async fn capture_window_resolves_id_then_captures_text() {
+        struct WinScreen;
+        impl ScreenCapturer for WinScreen {
+            fn capture_region(&self, _b: Bounds) -> Result<RgbaImage, CaptureError> {
+                Err(CaptureError::Unsupported("mock".into()))
+            }
+            fn list_displays(&self) -> Result<Vec<vantage_core::DisplayInfo>, CaptureError> {
+                Ok(vec![])
+            }
+            fn capture_window(&self, target: &WindowInfo) -> Result<RgbaImage, CaptureError> {
+                assert_eq!(target.window_id, 1);
+                assert_eq!(target.app, "Safari");
+                Ok(RgbaImage {
+                    width: 2,
+                    height: 2,
+                    pixels: vec![0u8; 16],
+                })
+            }
+        }
+        struct FakeOcr2;
+        impl TextRecognizer for FakeOcr2 {
+            fn recognize(&self, _i: &RgbaImage) -> Result<String, CaptureError> {
+                Ok("win-text".into())
+            }
+        }
+        let mock = Arc::new(MockWindows {
+            windows: vec![win(1, "Safari", "A")],
+            ..Default::default()
+        });
+        let vantage = Vantage::new(
+            mock,
+            Arc::new(WinScreen),
+            Arc::new(FakeOcr2),
+            Arc::new(NoClip),
+        );
+        let out = vantage
+            .capture_window(Parameters(CaptureWindowParams {
+                window_id: 1,
+                output: None,
+                max_dimension: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(out.0.text.as_deref(), Some("win-text"));
+        assert!(out.0.image.is_none(), "text mode must not return pixels");
+    }
+
+    #[tokio::test]
+    async fn capture_window_unknown_id_errors() {
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(NoScreen),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+        );
+        let result = vantage
+            .capture_window(Parameters(CaptureWindowParams {
+                window_id: 999,
+                output: None,
+                max_dimension: None,
+            }))
+            .await;
+        let err = match result {
+            Ok(_) => panic!("expected an error for an unknown window id"),
+            Err(e) => e,
+        };
+        assert!(err.message.contains("999"));
     }
 }
