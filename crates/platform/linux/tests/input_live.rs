@@ -15,3 +15,20 @@ fn clipboard_write_then_read_roundtrips() {
         .expect("read");
     assert_eq!(content.text.as_deref(), Some("vantage-act-test"));
 }
+
+#[test]
+#[ignore = "focuses a real window via AT-SPI grab_focus"]
+fn focus_first_window_does_not_error() {
+    use vantage_core::{WindowFilter, WindowInspector};
+    use vantage_platform_linux::LinuxWindowInspector;
+    let ins = LinuxWindowInspector::new();
+    let ws = ins
+        .list_windows(WindowFilter {
+            app_filter: None,
+            on_screen_only: true,
+        })
+        .unwrap();
+    if let Some(w) = ws.first() {
+        LinuxInputController::new().focus_window(w).expect("focus");
+    }
+}

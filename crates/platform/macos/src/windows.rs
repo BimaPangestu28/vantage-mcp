@@ -218,6 +218,12 @@ fn resolve_window(window_id: WindowId) -> Result<WindowRecord, CaptureError> {
         .ok_or(CaptureError::WindowNotFound(window_id))
 }
 
+/// Resolve a `window_id` to its owning process id (for app activation in the
+/// `InputController::focus_window` backend).
+pub(crate) fn resolve_window_pid(window_id: WindowId) -> Result<i32, CaptureError> {
+    Ok(resolve_window(window_id)?.owner_pid as i32)
+}
+
 /// Locates the `AXWindow` element matching `target` within its owning
 /// application.
 ///

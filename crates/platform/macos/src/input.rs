@@ -32,9 +32,18 @@ impl InputController for MacInputController {
             "macos click not yet implemented".into(),
         ))
     }
-    fn focus_window(&self, _target: &WindowInfo) -> Result<(), CaptureError> {
-        Err(CaptureError::Unsupported(
-            "macos focus_window not yet implemented".into(),
-        ))
+    fn focus_window(&self, target: &WindowInfo) -> Result<(), CaptureError> {
+        // Resolve the window's owning app and activate it (brings the app and
+        // its windows to the front). Coarser than raising the exact window, but
+        // reliable and needs no AX action FFI.
+        use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+        let pid = crate::windows::resolve_window_pid(target.window_id)?;
+        match NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+            Some(app) => {
+                app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+                Ok(())
+            }
+            None => Err(CaptureError::WindowNotFound(target.window_id)),
+        }
     }
 }

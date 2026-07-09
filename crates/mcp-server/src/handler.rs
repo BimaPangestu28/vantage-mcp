@@ -168,6 +168,12 @@ pub struct ClipboardWriteParams {
     pub text: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FocusWindowParams {
+    /// Target window id (from list_windows).
+    pub window_id: u32,
+}
+
 /// The MCP server handler. Holds injected, platform-agnostic backends and the
 /// composed tool router. Read tools (`windows`/`capturer`/`ocr`/`clipboard`) are
 /// always mounted; the act tools (`input`) are mounted only when the act gate is
@@ -369,6 +375,33 @@ impl Vantage {
             .await
             .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
             .map_err(to_mcp_error)?;
+        Ok(Json(AckOutput { ok: true }))
+    }
+
+    /// Bring a window (from list_windows) to the foreground. (Act tool.)
+    #[tool(description = "Focus/raise a window by id.")]
+    pub async fn focus_window(
+        &self,
+        Parameters(params): Parameters<FocusWindowParams>,
+    ) -> Result<Json<AckOutput>, ErrorData> {
+        tracing::info!("act: focus_window {}", params.window_id);
+        let window_id = params.window_id;
+        let windows = self.windows.clone();
+        let input = self.input.clone();
+        tokio::task::spawn_blocking(move || {
+            let target = windows
+                .list_windows(WindowFilter {
+                    app_filter: None,
+                    on_screen_only: false,
+                })?
+                .into_iter()
+                .find(|w| w.window_id == window_id)
+                .ok_or(vantage_core::CaptureError::WindowNotFound(window_id))?;
+            input.focus_window(&target)
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+        .map_err(to_mcp_error)?;
         Ok(Json(AckOutput { ok: true }))
     }
 }
@@ -914,5 +947,18 @@ mod tests {
             .unwrap();
         assert!(out.0.ok);
         assert_eq!(rec.0.lock().unwrap().as_deref(), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn focus_window_unknown_id_errors() {
+        let vantage = vantage_gated(true);
+        let result = vantage
+            .focus_window(Parameters(FocusWindowParams { window_id: 424242 }))
+            .await;
+        let err = match result {
+            Ok(_) => panic!("expected an error for an unknown window id"),
+            Err(e) => e,
+        };
+        assert!(err.message.contains("424242"));
     }
 }

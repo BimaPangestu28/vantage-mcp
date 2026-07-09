@@ -1,10 +1,22 @@
+use std::sync::Mutex;
+
 use vantage_core::{CaptureError, InputController, MouseButton, WindowInfo};
 
-pub struct LinuxInputController;
+use crate::windows::{connect, grab_focus_by_id};
+
+pub struct LinuxInputController {
+    // Private current-thread runtime for the async AT-SPI `focus_window` call,
+    // mirroring `LinuxWindowInspector`.
+    rt: Mutex<tokio::runtime::Runtime>,
+}
 
 impl LinuxInputController {
     pub fn new() -> Self {
-        Self
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime for AT-SPI input");
+        Self { rt: Mutex::new(rt) }
     }
 }
 
@@ -59,9 +71,11 @@ impl InputController for LinuxInputController {
             "linux click not yet implemented".into(),
         ))
     }
-    fn focus_window(&self, _target: &WindowInfo) -> Result<(), CaptureError> {
-        Err(CaptureError::Unsupported(
-            "linux focus_window not yet implemented".into(),
-        ))
+    fn focus_window(&self, target: &WindowInfo) -> Result<(), CaptureError> {
+        let rt = self.rt.lock().expect("runtime mutex");
+        rt.block_on(async {
+            let conn = connect().await?;
+            grab_focus_by_id(conn.connection(), target.window_id).await
+        })
     }
 }
