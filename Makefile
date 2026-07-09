@@ -61,16 +61,20 @@ lint: fmt-check clippy ## fmt-check + clippy
 ## --- Live tests (require a desktop session; #[ignore]d by default) --------
 
 .PHONY: live-linux
-live-linux: ## Run the ignored Linux live tests (AT-SPI, clipboard, capture, OCR)
-	cargo test -p vantage-platform-linux --test windows_live   -- --ignored
-	cargo test -p vantage-platform-linux --test clipboard_live -- --ignored
-	cargo test -p vantage-platform-linux --test capture_live   -- --ignored
-	cargo test -p vantage-platform-linux --test ocr_live       -- --ignored
+live-linux: ## Run the ignored Linux live tests (AT-SPI, clipboard, capture, OCR, displays, act)
+	cargo test -p vantage-platform-linux --test windows_live        -- --ignored
+	cargo test -p vantage-platform-linux --test clipboard_live      -- --ignored
+	cargo test -p vantage-platform-linux --test capture_live        -- --ignored
+	cargo test -p vantage-platform-linux --test capture_window_live -- --ignored
+	cargo test -p vantage-platform-linux --test displays_live       -- --ignored
+	cargo test -p vantage-platform-linux --test ocr_live            -- --ignored
+	cargo test -p vantage-platform-linux --test input_live          -- --ignored
 
 .PHONY: live-linux-nolibs
-live-linux-nolibs: ## Run only the Linux live tests that need no system libs (AT-SPI, clipboard)
+live-linux-nolibs: ## Run only the Linux live tests that need no system libs (AT-SPI, clipboard, act)
 	cargo test -p vantage-platform-linux --no-default-features --test windows_live   -- --ignored
 	cargo test -p vantage-platform-linux --no-default-features --test clipboard_live -- --ignored
+	cargo test -p vantage-platform-linux --no-default-features --test input_live     -- --ignored
 
 .PHONY: live-macos
 live-macos: ## Run the ignored macOS live tests
