@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `vantage-mcp` is a Model Context Protocol (MCP) server that gives an LLM agent
 **read-only** access to the desktop over stdio: enumerate windows and displays,
 read a window's accessibility text, capture a screen region or a whole window
-(OCR text or image), and read the clipboard. This is the read slice on **macOS and Linux** (X11 +
-Wayland), **no "act" tools** (no typing/clicking/clipboard writes). See
+(OCR text or image), and read the clipboard, and — behind a default-off gate — act (write clipboard,
+type, click, focus). Runs on **macOS and Linux** (X11 + Wayland). See
 `PRD-desktop-capture-mcp.md` and `docs/superpowers/specs/` /
 `docs/superpowers/plans/` for the full spec and task plans; `README.md`
 documents the tool surface and required per-OS permissions.
@@ -43,10 +43,11 @@ Four-crate Cargo workspace with a strict dependency direction —
 `core ← platform/{macos,linux} ← mcp-server`:
 
 - **`crates/core`** (`vantage_core`) — platform-agnostic contract. Defines the
-  four capability **traits** (`WindowInspector`, `ScreenCapturer` — which now
-  covers `capture_region`, `capture_window`, and `list_displays` —
-  `TextRecognizer`, `ClipboardAccess` in `traits.rs`), the value **types**
-  (`types.rs`, incl. `DisplayInfo`), and the domain error enum `CaptureError` +
+  five capability **traits** (`WindowInspector`; `ScreenCapturer` — covering
+  `capture_region`/`capture_window`/`list_displays`; `TextRecognizer`;
+  `ClipboardAccess`; and `InputController` — the gated act capability, in
+  `traits.rs`), the value **types** (`types.rs`, incl. `DisplayInfo`,
+  `MouseButton`), and the domain error enum `CaptureError` +
   its coarse `ErrorKind` (`error.rs`). No OS dependencies. **Near-frozen
   contract** — both platform backends implement exactly these traits; extend it
   only deliberately (as Spec B did), updating every backend + mock together.
@@ -69,11 +70,18 @@ Four-crate Cargo workspace with a strict dependency direction —
   --workspace` works on both OSes.
 
 - **`crates/mcp-server`** (bin `vantage-mcp`) — the MCP/JSON-RPC layer, built
-  on `rmcp` 2.1.0. `handler.rs` holds `Vantage`, which stores the four backends
-  as `Arc<dyn Trait>` and exposes the six `#[tool]` methods (`list_windows`,
+  on `rmcp` 2.1.0. `handler.rs` holds `Vantage`, which stores the five backends
+  as `Arc<dyn Trait>` plus a composed `tool_router` field. Tools split into two
+  `#[tool_router(router = …)]` groups: **read** (`list_windows`,
   `read_window_text`, `capture_region`, `capture_window`, `list_displays`,
-  `read_clipboard`); the two capture tools share `parse_mode`/`clamp_max_dim`/
-  `frame_to_output` (the OCR + downscale + PNG pipeline). `main.rs` selects the
+  `read_clipboard`) always mounted, and **act** (`clipboard_write`, `type_text`,
+  `click`, `focus_window`) merged in **only when `allow_act` is true** — so with
+  the gate off the act tools are absent from `tools/list` and uncallable (the
+  anti-prompt-injection guarantee). `Vantage::new(..., input, allow_act)` builds
+  the router; `#[tool_handler(router = self.tool_router)]` serves it. The two
+  capture tools share `parse_mode`/`clamp_max_dim`/`frame_to_output` (OCR +
+  downscale + PNG); act tools share `AckOutput`. `main.rs` resolves the gate once
+  (`act_enabled`: `--allow-act` flag or `VANTAGE_ALLOW_ACT`) and selects the
   backend by `cfg(target_os)` (`compile_error!` on unsupported OSes) and calls
   `backend::backends()` — it never names a concrete `Mac*`/`Linux*` type. The
   server forwards `capture`/`ocr` features to the Linux crate, so

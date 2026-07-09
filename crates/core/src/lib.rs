@@ -4,5 +4,7 @@ pub mod traits;
 pub mod types;
 
 pub use error::{CaptureError, ErrorKind};
-pub use traits::{ClipboardAccess, ScreenCapturer, TextRecognizer, WindowInspector};
+pub use traits::{
+    ClipboardAccess, InputController, ScreenCapturer, TextRecognizer, WindowInspector,
+};
 pub use types::*;

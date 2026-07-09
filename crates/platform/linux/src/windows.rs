@@ -185,6 +185,31 @@ async fn build_accessible<'a>(
         .map_err(map_internal)
 }
 
+/// Focus/raise the frame with the given synthesized `window_id` via AT-SPI's
+/// `Component::grab_focus`. Resolves the id by re-enumerating and re-hashing
+/// (same stateless resolve-by-id as `read_window_text`). Works over D-Bus on
+/// both X11 and Wayland. Used by the Linux `InputController::focus_window`.
+pub(crate) async fn grab_focus_by_id(
+    conn: &zbus::Connection,
+    window_id: WindowId,
+) -> Result<(), CaptureError> {
+    let frame = enumerate_frames(conn)
+        .await?
+        .into_iter()
+        .find(|f| f.info.window_id == window_id)
+        .ok_or(CaptureError::WindowNotFound(window_id))?;
+    let proxy = build_accessible(conn, &frame.bus, &frame.path).await?;
+    let component = proxy
+        .proxies()
+        .await
+        .map_err(map_internal)?
+        .component()
+        .await
+        .map_err(map_internal)?;
+    component.grab_focus().await.map_err(map_internal)?;
+    Ok(())
+}
+
 /// Extract a node's own text: prefer the `Text` interface's content, falling
 /// back to the accessible `Name`. Returns `None` when the node has no text.
 async fn node_text(node: &AccessibleProxy<'_>) -> Option<String> {

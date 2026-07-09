@@ -77,6 +77,45 @@ Edit Claude Desktop's config file (macOS:
 
 Restart Claude Desktop for the change to take effect.
 
+## 3b. Enabling act tools (optional, off by default)
+
+By default `vantage-mcp` serves only read tools. The act tools
+(`clipboard_write`, `type_text`, `click`, `focus_window`) cause side effects and
+are **not mounted** unless you explicitly opt in — they won't even appear in
+`tools/list`. Enable them with the `--allow-act` flag **or** the
+`VANTAGE_ALLOW_ACT=1` environment variable:
+
+```json
+{
+  "mcpServers": {
+    "vantage": {
+      "command": "/path/to/vantage-mcp/target/release/vantage-mcp",
+      "args": ["--allow-act"]
+    }
+  }
+}
+```
+
+or
+
+```json
+{
+  "mcpServers": {
+    "vantage": {
+      "command": "/path/to/vantage-mcp/target/release/vantage-mcp",
+      "env": { "VANTAGE_ALLOW_ACT": "1" }
+    }
+  }
+}
+```
+
+⚠️ **Only enable this if you trust the agent and its context.** With act tools
+mounted, the agent can type, click, focus windows, and write your clipboard.
+The gate is deliberately operator-controlled at launch (not agent-controlled at
+runtime); every act call is logged to stderr. `type_text`/`click` require X11 or
+macOS — on native Wayland the compositor restricts synthetic input and the tools
+return an actionable error.
+
 ## 4. Grant OS permissions
 
 ### macOS

@@ -3,12 +3,16 @@
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
-use vantage_core::{ClipboardAccess, ScreenCapturer, TextRecognizer, WindowInspector};
+use vantage_core::{
+    ClipboardAccess, InputController, ScreenCapturer, TextRecognizer, WindowInspector,
+};
 
 #[cfg(target_os = "macos")]
 mod capture;
 #[cfg(target_os = "macos")]
 mod clipboard;
+#[cfg(target_os = "macos")]
+mod input;
 #[cfg(target_os = "macos")]
 mod ocr;
 #[cfg(target_os = "macos")]
@@ -17,6 +21,8 @@ mod windows;
 pub use capture::MacScreenCapturer;
 #[cfg(target_os = "macos")]
 pub use clipboard::MacClipboard;
+#[cfg(target_os = "macos")]
+pub use input::MacInputController;
 #[cfg(target_os = "macos")]
 pub use ocr::MacTextRecognizer;
 #[cfg(target_os = "macos")]
@@ -31,11 +37,13 @@ pub fn backends() -> (
     Arc<dyn ScreenCapturer>,
     Arc<dyn TextRecognizer>,
     Arc<dyn ClipboardAccess>,
+    Arc<dyn InputController>,
 ) {
     (
         Arc::new(MacWindowInspector::new()),
         Arc::new(MacScreenCapturer::new()),
         Arc::new(MacTextRecognizer::new()),
         Arc::new(MacClipboard::new()),
+        Arc::new(MacInputController::new()),
     )
 }

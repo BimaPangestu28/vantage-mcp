@@ -1,7 +1,7 @@
 use crate::error::CaptureError;
 use crate::types::{
-    Bounds, ClipboardContent, ClipboardPrefer, DisplayInfo, RgbaImage, WindowFilter, WindowId,
-    WindowInfo, WindowText,
+    Bounds, ClipboardContent, ClipboardPrefer, DisplayInfo, MouseButton, RgbaImage, WindowFilter,
+    WindowId, WindowInfo, WindowText,
 };
 
 pub trait WindowInspector: Send + Sync {
@@ -25,4 +25,12 @@ pub trait TextRecognizer: Send + Sync {
 
 pub trait ClipboardAccess: Send + Sync {
     fn read(&self, prefer: ClipboardPrefer) -> Result<ClipboardContent, CaptureError>;
+}
+
+/// Write/act capability. Kept behind the server's default-off act gate.
+pub trait InputController: Send + Sync {
+    fn write_clipboard(&self, text: &str) -> Result<(), CaptureError>;
+    fn type_text(&self, text: &str) -> Result<(), CaptureError>;
+    fn click(&self, x: i32, y: i32, button: MouseButton) -> Result<(), CaptureError>;
+    fn focus_window(&self, target: &WindowInfo) -> Result<(), CaptureError>;
 }
