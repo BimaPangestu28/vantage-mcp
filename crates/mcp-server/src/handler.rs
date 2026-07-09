@@ -163,9 +163,13 @@ pub struct AckOutput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ClipboardWriteParams {
-    /// Text to place on the system clipboard.
-    pub text: String,
+pub struct WriteClipboardParams {
+    /// Text to place on the clipboard.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Image to place on the clipboard, as a base64-encoded PNG.
+    #[serde(default)]
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -187,6 +191,21 @@ pub struct ClickParams {
     /// "left" (default), "right", or "middle".
     #[serde(default)]
     pub button: vantage_core::MouseButton,
+    /// Perform a double-click.
+    #[serde(default)]
+    pub double: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MoveMouseParams {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct KeyPressParams {
+    /// Key combo, e.g. "ctrl+shift+t" or "enter".
+    pub keys: String,
 }
 
 /// The MCP server handler. Holds injected, platform-agnostic backends and the
@@ -378,18 +397,52 @@ impl Vantage {
 /// The act (mutating) tools — mounted only when the act gate is enabled.
 #[tool_router(router = act_tool_router)]
 impl Vantage {
-    /// Write text to the system clipboard. (Act tool — requires the act gate.)
-    #[tool(description = "Write text to the system clipboard.")]
-    pub async fn clipboard_write(
+    /// Write text and/or an image to the system clipboard. (Act tool.)
+    #[tool(description = "Write text and/or a base64-PNG image to the clipboard.")]
+    pub async fn write_clipboard(
         &self,
-        Parameters(params): Parameters<ClipboardWriteParams>,
+        Parameters(params): Parameters<WriteClipboardParams>,
     ) -> Result<Json<AckOutput>, ErrorData> {
-        tracing::info!("act: clipboard_write ({} chars)", params.text.len());
+        use base64::Engine;
+        if params.text.is_none() && params.image.is_none() {
+            return Err(ErrorData::invalid_params(
+                "write_clipboard requires at least one of `text` or `image`".to_string(),
+                None,
+            ));
+        }
+        tracing::info!(
+            "act: write_clipboard (text={}, image={})",
+            params.text.is_some(),
+            params.image.is_some()
+        );
+        let image = match params.image {
+            Some(b64) => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64.as_bytes())
+                    .map_err(|e| {
+                        ErrorData::invalid_params(format!("image is not valid base64: {e}"), None)
+                    })?;
+                let decoded = image::load_from_memory(&bytes)
+                    .map_err(|e| {
+                        ErrorData::invalid_params(format!("image is not a valid PNG: {e}"), None)
+                    })?
+                    .to_rgba8();
+                Some(vantage_core::RgbaImage {
+                    width: decoded.width(),
+                    height: decoded.height(),
+                    pixels: decoded.into_raw(),
+                })
+            }
+            None => None,
+        };
+        let text = params.text;
         let input = self.input.clone();
-        tokio::task::spawn_blocking(move || input.write_clipboard(Some(&params.text), None))
-            .await
-            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
-            .map_err(to_mcp_error)?;
+        tokio::task::spawn_blocking(move || {
+            input.write_clipboard(text.as_deref(), image.as_ref())
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+        .map_err(to_mcp_error)?;
         Ok(Json(AckOutput { ok: true }))
     }
 
@@ -441,10 +494,46 @@ impl Vantage {
         &self,
         Parameters(params): Parameters<ClickParams>,
     ) -> Result<Json<AckOutput>, ErrorData> {
-        tracing::info!("act: click ({},{}) {:?}", params.x, params.y, params.button);
+        tracing::info!(
+            "act: click ({},{}) {:?} double={}",
+            params.x,
+            params.y,
+            params.button,
+            params.double
+        );
         let input = self.input.clone();
-        let (x, y, button) = (params.x, params.y, params.button);
-        tokio::task::spawn_blocking(move || input.click(x, y, button, false))
+        let (x, y, button, double) = (params.x, params.y, params.button, params.double);
+        tokio::task::spawn_blocking(move || input.click(x, y, button, double))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+        Ok(Json(AckOutput { ok: true }))
+    }
+
+    /// Move the mouse to absolute screen coordinates. (Act tool.)
+    #[tool(description = "Move the mouse to (x, y).")]
+    pub async fn move_mouse(
+        &self,
+        Parameters(p): Parameters<MoveMouseParams>,
+    ) -> Result<Json<AckOutput>, ErrorData> {
+        tracing::info!("act: move_mouse ({},{})", p.x, p.y);
+        let input = self.input.clone();
+        tokio::task::spawn_blocking(move || input.move_mouse(p.x, p.y))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+        Ok(Json(AckOutput { ok: true }))
+    }
+
+    /// Press a key combo (modifier+key), e.g. "ctrl+shift+t". (Act tool.)
+    #[tool(description = "Press a key combo, e.g. ctrl+shift+t.")]
+    pub async fn key_press(
+        &self,
+        Parameters(p): Parameters<KeyPressParams>,
+    ) -> Result<Json<AckOutput>, ErrorData> {
+        tracing::info!("act: key_press {:?}", p.keys);
+        let input = self.input.clone();
+        tokio::task::spawn_blocking(move || input.key_press(&p.keys))
             .await
             .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
             .map_err(to_mcp_error)?;
@@ -943,7 +1032,7 @@ mod tests {
     fn act_tools_absent_when_gate_off_present_when_on() {
         let off = vantage_gated(false);
         assert!(
-            !off.tool_router.has_route("clipboard_write"),
+            !off.tool_router.has_route("write_clipboard"),
             "act tool must be unmounted when the gate is off"
         );
         // Read tools are always mounted.
@@ -951,13 +1040,13 @@ mod tests {
 
         let on = vantage_gated(true);
         assert!(
-            on.tool_router.has_route("clipboard_write"),
+            on.tool_router.has_route("write_clipboard"),
             "act tool must be mounted when the gate is on"
         );
     }
 
     #[tokio::test]
-    async fn clipboard_write_forwards_to_input() {
+    async fn write_clipboard_forwards_to_input() {
         use std::sync::Mutex;
         struct RecInput(Mutex<Option<String>>);
         impl InputController for RecInput {
@@ -1001,13 +1090,27 @@ mod tests {
             true,
         );
         let out = vantage
-            .clipboard_write(Parameters(ClipboardWriteParams {
-                text: "hello".into(),
+            .write_clipboard(Parameters(WriteClipboardParams {
+                text: Some("hello".into()),
+                image: None,
             }))
             .await
             .unwrap();
         assert!(out.0.ok);
         assert_eq!(rec.0.lock().unwrap().as_deref(), Some("hello"));
+
+        // Missing both text and image → invalid_params.
+        let err = match vantage
+            .write_clipboard(Parameters(WriteClipboardParams {
+                text: None,
+                image: None,
+            }))
+            .await
+        {
+            Ok(_) => panic!("expected invalid_params when both text and image are absent"),
+            Err(e) => e,
+        };
+        assert!(err.message.to_lowercase().contains("text") || err.message.to_lowercase().contains("image"));
     }
 
     #[tokio::test]
@@ -1087,13 +1190,26 @@ mod tests {
                 x: 12,
                 y: 34,
                 button: vantage_core::MouseButton::Right,
+                double: true,
+            }))
+            .await
+            .unwrap();
+        vantage
+            .move_mouse(Parameters(MoveMouseParams { x: 5, y: 6 }))
+            .await
+            .unwrap();
+        vantage
+            .key_press(Parameters(KeyPressParams {
+                keys: "ctrl+c".into(),
             }))
             .await
             .unwrap();
         assert_eq!(rec.typed.lock().unwrap().as_deref(), Some("hi there"));
         assert_eq!(
             *rec.clicked.lock().unwrap(),
-            Some((12, 34, vantage_core::MouseButton::Right, false))
+            Some((12, 34, vantage_core::MouseButton::Right, true))
         );
+        assert_eq!(*rec.moved.lock().unwrap(), Some((5, 6)));
+        assert_eq!(rec.pressed.lock().unwrap().as_deref(), Some("ctrl+c"));
     }
 }
