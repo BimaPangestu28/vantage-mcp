@@ -2,18 +2,39 @@
 //! Run: `cargo test -p vantage-platform-linux --test input_live -- --ignored`
 #![cfg(target_os = "linux")]
 
-use vantage_core::{ClipboardAccess, ClipboardPrefer, InputController};
+use vantage_core::{ClipboardAccess, ClipboardPrefer, InputController, RgbaImage};
 use vantage_platform_linux::{LinuxClipboard, LinuxInputController};
 
+/// Text then image, in one test so the two writes don't race for the global
+/// clipboard (each `write_clipboard` serves the selection from a thread until
+/// it is replaced; running them concurrently would let one supersede the other).
 #[test]
 #[ignore = "mutates the real system clipboard"]
-fn clipboard_write_then_read_roundtrips() {
+fn clipboard_write_text_then_image_roundtrips() {
     let input = LinuxInputController::new();
-    input.write_clipboard("vantage-act-test").expect("write");
-    let content = LinuxClipboard::new()
+
+    input
+        .write_clipboard(Some("vantage-act-test"), None)
+        .expect("write text");
+    let text = LinuxClipboard::new()
         .read(ClipboardPrefer::Text)
-        .expect("read");
-    assert_eq!(content.text.as_deref(), Some("vantage-act-test"));
+        .expect("read text");
+    assert_eq!(text.text.as_deref(), Some("vantage-act-test"));
+
+    // 2x2 solid red RGBA.
+    let img = RgbaImage {
+        width: 2,
+        height: 2,
+        pixels: [255u8, 0, 0, 255].repeat(4),
+    };
+    input
+        .write_clipboard(None, Some(&img))
+        .expect("write image");
+    let content = LinuxClipboard::new()
+        .read(ClipboardPrefer::Image)
+        .expect("read image");
+    let out = content.image.expect("clipboard has an image");
+    assert_eq!((out.width, out.height), (2, 2));
 }
 
 #[test]

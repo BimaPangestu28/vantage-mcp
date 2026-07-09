@@ -22,6 +22,16 @@ pub const DEFAULT_DEPTH: u32 = 20;
 /// regardless of what the caller requests.
 pub const MAX_DEPTH: u32 = 50;
 
+/// The names of the act tools, for gate validation + selective mounting.
+pub const ACT_TOOL_NAMES: [&str; 6] = [
+    "write_clipboard",
+    "type_text",
+    "click",
+    "focus_window",
+    "move_mouse",
+    "key_press",
+];
+
 /// What a capture tool should return: OCR text, a downscaled PNG, or both.
 /// Shared by `capture_region` and `capture_window`.
 #[derive(PartialEq, Clone, Copy)]
@@ -163,9 +173,13 @@ pub struct AckOutput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ClipboardWriteParams {
-    /// Text to place on the system clipboard.
-    pub text: String,
+pub struct WriteClipboardParams {
+    /// Text to place on the clipboard.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Image to place on the clipboard, as a base64-encoded PNG.
+    #[serde(default)]
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -187,6 +201,21 @@ pub struct ClickParams {
     /// "left" (default), "right", or "middle".
     #[serde(default)]
     pub button: vantage_core::MouseButton,
+    /// Perform a double-click.
+    #[serde(default)]
+    pub double: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MoveMouseParams {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct KeyPressParams {
+    /// Key combo, e.g. "ctrl+shift+t" or "enter".
+    pub keys: String,
 }
 
 /// The MCP server handler. Holds injected, platform-agnostic backends and the
@@ -215,11 +244,19 @@ impl Vantage {
         ocr: Arc<dyn TextRecognizer>,
         clipboard: Arc<dyn ClipboardAccess>,
         input: Arc<dyn InputController>,
-        allow_act: bool,
+        allowed_act: Vec<String>,
     ) -> Self {
         let mut tool_router = Self::read_tool_router();
-        if allow_act {
-            tool_router.merge(Self::act_tool_router());
+        if !allowed_act.is_empty() {
+            // Build the full act router, then drop any tool the operator did not
+            // enable, so only the selected act tools are mounted.
+            let mut act = Self::act_tool_router();
+            for name in ACT_TOOL_NAMES {
+                if !allowed_act.iter().any(|a| a == name) {
+                    act.remove_route(name);
+                }
+            }
+            tool_router.merge(act);
         }
         Self {
             windows,
@@ -378,15 +415,47 @@ impl Vantage {
 /// The act (mutating) tools — mounted only when the act gate is enabled.
 #[tool_router(router = act_tool_router)]
 impl Vantage {
-    /// Write text to the system clipboard. (Act tool — requires the act gate.)
-    #[tool(description = "Write text to the system clipboard.")]
-    pub async fn clipboard_write(
+    /// Write text and/or an image to the system clipboard. (Act tool.)
+    #[tool(description = "Write text and/or a base64-PNG image to the clipboard.")]
+    pub async fn write_clipboard(
         &self,
-        Parameters(params): Parameters<ClipboardWriteParams>,
+        Parameters(params): Parameters<WriteClipboardParams>,
     ) -> Result<Json<AckOutput>, ErrorData> {
-        tracing::info!("act: clipboard_write ({} chars)", params.text.len());
+        use base64::Engine;
+        if params.text.is_none() && params.image.is_none() {
+            return Err(ErrorData::invalid_params(
+                "write_clipboard requires at least one of `text` or `image`".to_string(),
+                None,
+            ));
+        }
+        tracing::info!(
+            "act: write_clipboard (text={}, image={})",
+            params.text.is_some(),
+            params.image.is_some()
+        );
+        let image = match params.image {
+            Some(b64) => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64.as_bytes())
+                    .map_err(|e| {
+                        ErrorData::invalid_params(format!("image is not valid base64: {e}"), None)
+                    })?;
+                let decoded = image::load_from_memory(&bytes)
+                    .map_err(|e| {
+                        ErrorData::invalid_params(format!("image is not a valid PNG: {e}"), None)
+                    })?
+                    .to_rgba8();
+                Some(vantage_core::RgbaImage {
+                    width: decoded.width(),
+                    height: decoded.height(),
+                    pixels: decoded.into_raw(),
+                })
+            }
+            None => None,
+        };
+        let text = params.text;
         let input = self.input.clone();
-        tokio::task::spawn_blocking(move || input.write_clipboard(&params.text))
+        tokio::task::spawn_blocking(move || input.write_clipboard(text.as_deref(), image.as_ref()))
             .await
             .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
             .map_err(to_mcp_error)?;
@@ -441,10 +510,46 @@ impl Vantage {
         &self,
         Parameters(params): Parameters<ClickParams>,
     ) -> Result<Json<AckOutput>, ErrorData> {
-        tracing::info!("act: click ({},{}) {:?}", params.x, params.y, params.button);
+        tracing::info!(
+            "act: click ({},{}) {:?} double={}",
+            params.x,
+            params.y,
+            params.button,
+            params.double
+        );
         let input = self.input.clone();
-        let (x, y, button) = (params.x, params.y, params.button);
-        tokio::task::spawn_blocking(move || input.click(x, y, button))
+        let (x, y, button, double) = (params.x, params.y, params.button, params.double);
+        tokio::task::spawn_blocking(move || input.click(x, y, button, double))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+        Ok(Json(AckOutput { ok: true }))
+    }
+
+    /// Move the mouse to absolute screen coordinates. (Act tool.)
+    #[tool(description = "Move the mouse to (x, y).")]
+    pub async fn move_mouse(
+        &self,
+        Parameters(p): Parameters<MoveMouseParams>,
+    ) -> Result<Json<AckOutput>, ErrorData> {
+        tracing::info!("act: move_mouse ({},{})", p.x, p.y);
+        let input = self.input.clone();
+        tokio::task::spawn_blocking(move || input.move_mouse(p.x, p.y))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+        Ok(Json(AckOutput { ok: true }))
+    }
+
+    /// Press a key combo (modifier+key), e.g. "ctrl+shift+t". (Act tool.)
+    #[tool(description = "Press a key combo, e.g. ctrl+shift+t.")]
+    pub async fn key_press(
+        &self,
+        Parameters(p): Parameters<KeyPressParams>,
+    ) -> Result<Json<AckOutput>, ErrorData> {
+        tracing::info!("act: key_press {:?}", p.keys);
+        let input = self.input.clone();
+        tokio::task::spawn_blocking(move || input.key_press(&p.keys))
             .await
             .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
             .map_err(to_mcp_error)?;
@@ -527,7 +632,11 @@ mod tests {
 
     pub(crate) struct NoInput;
     impl InputController for NoInput {
-        fn write_clipboard(&self, _t: &str) -> Result<(), CaptureError> {
+        fn write_clipboard(
+            &self,
+            _t: Option<&str>,
+            _i: Option<&vantage_core::RgbaImage>,
+        ) -> Result<(), CaptureError> {
             Err(CaptureError::Unsupported("mock".into()))
         }
         fn type_text(&self, _t: &str) -> Result<(), CaptureError> {
@@ -538,10 +647,17 @@ mod tests {
             _x: i32,
             _y: i32,
             _b: vantage_core::MouseButton,
+            _d: bool,
         ) -> Result<(), CaptureError> {
             Err(CaptureError::Unsupported("mock".into()))
         }
         fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn move_mouse(&self, _x: i32, _y: i32) -> Result<(), CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn key_press(&self, _k: &str) -> Result<(), CaptureError> {
             Err(CaptureError::Unsupported("mock".into()))
         }
     }
@@ -555,7 +671,14 @@ mod tests {
         ocr: Arc<dyn TextRecognizer>,
         clipboard: Arc<dyn ClipboardAccess>,
     ) -> Vantage {
-        Vantage::new(windows, capturer, ocr, clipboard, Arc::new(NoInput), false)
+        Vantage::new(
+            windows,
+            capturer,
+            ocr,
+            clipboard,
+            Arc::new(NoInput),
+            Vec::new(),
+        )
     }
 
     pub(crate) fn vantage_with_windows(windows: Arc<MockWindows>) -> Vantage {
@@ -917,41 +1040,53 @@ mod tests {
         assert!(err.message.contains("999"));
     }
 
-    fn vantage_gated(allow_act: bool) -> Vantage {
+    fn all_act() -> Vec<String> {
+        ACT_TOOL_NAMES.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn vantage_gated(allowed: &[&str]) -> Vantage {
         Vantage::new(
             Arc::new(MockWindows::default()),
             Arc::new(NoScreen),
             Arc::new(NoOcr),
             Arc::new(NoClip),
             Arc::new(NoInput),
-            allow_act,
+            allowed.iter().map(|s| s.to_string()).collect(),
         )
     }
 
     #[test]
-    fn act_tools_absent_when_gate_off_present_when_on() {
-        let off = vantage_gated(false);
-        assert!(
-            !off.tool_router.has_route("clipboard_write"),
-            "act tool must be unmounted when the gate is off"
-        );
-        // Read tools are always mounted.
+    fn act_gate_mounts_only_allowed_tools() {
+        // Off: no act tool mounted; read tools always mounted.
+        let off = vantage_gated(&[]);
+        assert!(!off.tool_router.has_route("write_clipboard"));
         assert!(off.tool_router.has_route("list_windows"));
 
-        let on = vantage_gated(true);
-        assert!(
-            on.tool_router.has_route("clipboard_write"),
-            "act tool must be mounted when the gate is on"
-        );
+        // Subset: only the named act tools mounted.
+        let subset = vantage_gated(&["write_clipboard", "click"]);
+        assert!(subset.tool_router.has_route("write_clipboard"));
+        assert!(subset.tool_router.has_route("click"));
+        assert!(!subset.tool_router.has_route("key_press"));
+        assert!(!subset.tool_router.has_route("type_text"));
+
+        // All: every act tool mounted.
+        let on = vantage_gated(&ACT_TOOL_NAMES);
+        for n in ACT_TOOL_NAMES {
+            assert!(on.tool_router.has_route(n), "{n} should be mounted");
+        }
     }
 
     #[tokio::test]
-    async fn clipboard_write_forwards_to_input() {
+    async fn write_clipboard_forwards_to_input() {
         use std::sync::Mutex;
         struct RecInput(Mutex<Option<String>>);
         impl InputController for RecInput {
-            fn write_clipboard(&self, t: &str) -> Result<(), CaptureError> {
-                *self.0.lock().unwrap() = Some(t.to_owned());
+            fn write_clipboard(
+                &self,
+                t: Option<&str>,
+                _i: Option<&vantage_core::RgbaImage>,
+            ) -> Result<(), CaptureError> {
+                *self.0.lock().unwrap() = t.map(|s| s.to_owned());
                 Ok(())
             }
             fn type_text(&self, _t: &str) -> Result<(), CaptureError> {
@@ -962,10 +1097,17 @@ mod tests {
                 _x: i32,
                 _y: i32,
                 _b: vantage_core::MouseButton,
+                _d: bool,
             ) -> Result<(), CaptureError> {
                 Ok(())
             }
             fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
+                Ok(())
+            }
+            fn move_mouse(&self, _x: i32, _y: i32) -> Result<(), CaptureError> {
+                Ok(())
+            }
+            fn key_press(&self, _k: &str) -> Result<(), CaptureError> {
                 Ok(())
             }
         }
@@ -976,21 +1118,38 @@ mod tests {
             Arc::new(NoOcr),
             Arc::new(NoClip),
             rec.clone(),
-            true,
+            all_act(),
         );
         let out = vantage
-            .clipboard_write(Parameters(ClipboardWriteParams {
-                text: "hello".into(),
+            .write_clipboard(Parameters(WriteClipboardParams {
+                text: Some("hello".into()),
+                image: None,
             }))
             .await
             .unwrap();
         assert!(out.0.ok);
         assert_eq!(rec.0.lock().unwrap().as_deref(), Some("hello"));
+
+        // Missing both text and image → invalid_params.
+        let err = match vantage
+            .write_clipboard(Parameters(WriteClipboardParams {
+                text: None,
+                image: None,
+            }))
+            .await
+        {
+            Ok(_) => panic!("expected invalid_params when both text and image are absent"),
+            Err(e) => e,
+        };
+        assert!(
+            err.message.to_lowercase().contains("text")
+                || err.message.to_lowercase().contains("image")
+        );
     }
 
     #[tokio::test]
     async fn focus_window_unknown_id_errors() {
-        let vantage = vantage_gated(true);
+        let vantage = vantage_gated(&ACT_TOOL_NAMES);
         let result = vantage
             .focus_window(Parameters(FocusWindowParams { window_id: 424242 }))
             .await;
@@ -1007,10 +1166,16 @@ mod tests {
         #[derive(Default)]
         struct RecInput {
             typed: Mutex<Option<String>>,
-            clicked: Mutex<Option<(i32, i32, vantage_core::MouseButton)>>,
+            clicked: Mutex<Option<(i32, i32, vantage_core::MouseButton, bool)>>,
+            moved: Mutex<Option<(i32, i32)>>,
+            pressed: Mutex<Option<String>>,
         }
         impl InputController for RecInput {
-            fn write_clipboard(&self, _t: &str) -> Result<(), CaptureError> {
+            fn write_clipboard(
+                &self,
+                _t: Option<&str>,
+                _i: Option<&vantage_core::RgbaImage>,
+            ) -> Result<(), CaptureError> {
                 Ok(())
             }
             fn type_text(&self, t: &str) -> Result<(), CaptureError> {
@@ -1022,8 +1187,17 @@ mod tests {
                 x: i32,
                 y: i32,
                 b: vantage_core::MouseButton,
+                d: bool,
             ) -> Result<(), CaptureError> {
-                *self.clicked.lock().unwrap() = Some((x, y, b));
+                *self.clicked.lock().unwrap() = Some((x, y, b, d));
+                Ok(())
+            }
+            fn move_mouse(&self, x: i32, y: i32) -> Result<(), CaptureError> {
+                *self.moved.lock().unwrap() = Some((x, y));
+                Ok(())
+            }
+            fn key_press(&self, k: &str) -> Result<(), CaptureError> {
+                *self.pressed.lock().unwrap() = Some(k.to_owned());
                 Ok(())
             }
             fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
@@ -1037,7 +1211,7 @@ mod tests {
             Arc::new(NoOcr),
             Arc::new(NoClip),
             rec.clone(),
-            true,
+            all_act(),
         );
         vantage
             .type_text(Parameters(TypeTextParams {
@@ -1050,13 +1224,26 @@ mod tests {
                 x: 12,
                 y: 34,
                 button: vantage_core::MouseButton::Right,
+                double: true,
+            }))
+            .await
+            .unwrap();
+        vantage
+            .move_mouse(Parameters(MoveMouseParams { x: 5, y: 6 }))
+            .await
+            .unwrap();
+        vantage
+            .key_press(Parameters(KeyPressParams {
+                keys: "ctrl+c".into(),
             }))
             .await
             .unwrap();
         assert_eq!(rec.typed.lock().unwrap().as_deref(), Some("hi there"));
         assert_eq!(
             *rec.clicked.lock().unwrap(),
-            Some((12, 34, vantage_core::MouseButton::Right))
+            Some((12, 34, vantage_core::MouseButton::Right, true))
         );
+        assert_eq!(*rec.moved.lock().unwrap(), Some((5, 6)));
+        assert_eq!(rec.pressed.lock().unwrap().as_deref(), Some("ctrl+c"));
     }
 }

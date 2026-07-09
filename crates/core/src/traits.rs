@@ -29,8 +29,16 @@ pub trait ClipboardAccess: Send + Sync {
 
 /// Write/act capability. Kept behind the server's default-off act gate.
 pub trait InputController: Send + Sync {
-    fn write_clipboard(&self, text: &str) -> Result<(), CaptureError>;
+    /// Write text and/or an image to the system clipboard.
+    fn write_clipboard(
+        &self,
+        text: Option<&str>,
+        image: Option<&RgbaImage>,
+    ) -> Result<(), CaptureError>;
     fn type_text(&self, text: &str) -> Result<(), CaptureError>;
-    fn click(&self, x: i32, y: i32, button: MouseButton) -> Result<(), CaptureError>;
+    fn click(&self, x: i32, y: i32, button: MouseButton, double: bool) -> Result<(), CaptureError>;
     fn focus_window(&self, target: &WindowInfo) -> Result<(), CaptureError>;
+    fn move_mouse(&self, x: i32, y: i32) -> Result<(), CaptureError>;
+    /// Press a modifier+key combo, e.g. "ctrl+shift+t".
+    fn key_press(&self, keys: &str) -> Result<(), CaptureError>;
 }
