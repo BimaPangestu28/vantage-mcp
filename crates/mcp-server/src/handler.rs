@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router, ErrorData, Json, ServerHandler};
@@ -7,8 +8,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use vantage_core::{
-    Bounds, ClipboardAccess, ClipboardKind, ClipboardPrefer, DisplayInfo, ScreenCapturer,
-    TextRecognizer, WindowFilter, WindowInfo, WindowInspector, WindowText,
+    Bounds, ClipboardAccess, ClipboardKind, ClipboardPrefer, DisplayInfo, InputController,
+    ScreenCapturer, TextRecognizer, WindowFilter, WindowInfo, WindowInspector, WindowText,
 };
 
 use crate::error_map::to_mcp_error;
@@ -155,38 +156,52 @@ pub struct ListDisplaysResult {
     pub displays: Vec<DisplayInfo>,
 }
 
-/// The MCP server handler. Holds injected, platform-agnostic backends used
-/// by the `#[tool]` methods below: `windows` (list_windows, read_window_text),
-/// `capturer`/`ocr` (capture_region), and `clipboard` (read_clipboard).
+/// The MCP server handler. Holds injected, platform-agnostic backends and the
+/// composed tool router. Read tools (`windows`/`capturer`/`ocr`/`clipboard`) are
+/// always mounted; the act tools (`input`) are mounted only when the act gate is
+/// enabled, so a side-effecting tool is never even present unless the operator
+/// opted in.
 #[derive(Clone)]
 pub struct Vantage {
     pub(crate) windows: Arc<dyn WindowInspector>,
     pub(crate) capturer: Arc<dyn ScreenCapturer>,
     pub(crate) ocr: Arc<dyn TextRecognizer>,
     pub(crate) clipboard: Arc<dyn ClipboardAccess>,
+    pub(crate) input: Arc<dyn InputController>,
+    tool_router: ToolRouter<Self>,
 }
 
-// `#[tool_router]` generates `Self::tool_router()`, an associated function
-// returning a `ToolRouter<Self>` built from every method in this impl block
-// tagged `#[tool]`. There are none yet, so it returns an empty-but-valid
-// router. `#[tool_handler]` below calls `Self::tool_router()` automatically,
-// so no field is needed on the struct to hold it.
-#[tool_router]
 impl Vantage {
+    /// Construct the handler. `allow_act` gates the act tools: when false, the
+    /// act router is never merged and those tools are absent from `tools/list`
+    /// and uncallable.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         windows: Arc<dyn WindowInspector>,
         capturer: Arc<dyn ScreenCapturer>,
         ocr: Arc<dyn TextRecognizer>,
         clipboard: Arc<dyn ClipboardAccess>,
+        input: Arc<dyn InputController>,
+        allow_act: bool,
     ) -> Self {
+        let mut tool_router = Self::read_tool_router();
+        if allow_act {
+            tool_router.merge(Self::act_tool_router());
+        }
         Self {
             windows,
             capturer,
             ocr,
             clipboard,
+            input,
+            tool_router,
         }
     }
+}
 
+/// The read (non-mutating) tools — always mounted.
+#[tool_router(router = read_tool_router)]
+impl Vantage {
     /// List on-screen windows: window_id, owning app, title, bounds, and focus.
     /// Primary entry point for an agent to orient before reading a window.
     #[tool(description = "List on-screen windows (id, app, title, bounds, focused).")]
@@ -327,7 +342,12 @@ impl Vantage {
     }
 }
 
-#[tool_handler]
+/// The act (mutating) tools — mounted only when the act gate is enabled. Tools
+/// are added here in later tasks; the empty block yields an empty router.
+#[tool_router(router = act_tool_router)]
+impl Vantage {}
+
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for Vantage {
     fn get_info(&self) -> ServerInfo {
         let capabilities = ServerCapabilities::builder().enable_tools().build();
@@ -400,8 +420,48 @@ mod tests {
         }
     }
 
-    pub(crate) fn vantage_with_windows(windows: Arc<MockWindows>) -> Vantage {
+    pub(crate) struct NoInput;
+    impl InputController for NoInput {
+        fn write_clipboard(&self, _t: &str) -> Result<(), CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn type_text(&self, _t: &str) -> Result<(), CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn click(
+            &self,
+            _x: i32,
+            _y: i32,
+            _b: vantage_core::MouseButton,
+        ) -> Result<(), CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+    }
+
+    /// Build a `Vantage` for tests with a no-op input backend and the act gate
+    /// off (the default). Tests that need the act gate on use `Vantage::new`
+    /// directly with `allow_act = true`.
+    fn mk_vantage(
+        windows: Arc<dyn WindowInspector>,
+        capturer: Arc<dyn ScreenCapturer>,
+        ocr: Arc<dyn TextRecognizer>,
+        clipboard: Arc<dyn ClipboardAccess>,
+    ) -> Vantage {
         Vantage::new(
+            windows,
+            capturer,
+            ocr,
+            clipboard,
+            Arc::new(NoInput),
+            false,
+        )
+    }
+
+    pub(crate) fn vantage_with_windows(windows: Arc<MockWindows>) -> Vantage {
+        mk_vantage(
             windows,
             Arc::new(NoScreen),
             Arc::new(NoOcr),
@@ -471,7 +531,7 @@ mod tests {
         let spy = Arc::new(DepthSpy {
             seen: Mutex::new(vec![]),
         });
-        let vantage = Vantage::new(
+        let vantage = mk_vantage(
             spy.clone(),
             Arc::new(NoScreen),
             Arc::new(NoOcr),
@@ -522,7 +582,7 @@ mod tests {
                 Ok("hello".into())
             }
         }
-        let vantage = Vantage::new(
+        let vantage = mk_vantage(
             Arc::new(MockWindows::default()),
             Arc::new(FakeScreen),
             Arc::new(FakeOcr),
@@ -565,7 +625,7 @@ mod tests {
                 Err(CaptureError::Unsupported("mock".into()))
             }
         }
-        let vantage = Vantage::new(
+        let vantage = mk_vantage(
             Arc::new(MockWindows::default()),
             Arc::new(LargeFakeScreen),
             Arc::new(NoOcr),
@@ -615,7 +675,7 @@ mod tests {
                 })
             }
         }
-        let vantage = Vantage::new(
+        let vantage = mk_vantage(
             Arc::new(MockWindows::default()),
             Arc::new(NoScreen),
             Arc::new(NoOcr),
@@ -631,7 +691,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_clipboard_rejects_bad_prefer() {
-        let vantage = Vantage::new(
+        let vantage = mk_vantage(
             Arc::new(MockWindows::default()),
             Arc::new(NoScreen),
             Arc::new(NoOcr),
@@ -677,7 +737,7 @@ mod tests {
                 Err(CaptureError::Unsupported("mock".into()))
             }
         }
-        let vantage = Vantage::new(
+        let vantage = mk_vantage(
             Arc::new(MockWindows::default()),
             Arc::new(TwoDisplays),
             Arc::new(NoOcr),
@@ -719,7 +779,7 @@ mod tests {
             windows: vec![win(1, "Safari", "A")],
             ..Default::default()
         });
-        let vantage = Vantage::new(
+        let vantage = mk_vantage(
             mock,
             Arc::new(WinScreen),
             Arc::new(FakeOcr2),
@@ -739,7 +799,7 @@ mod tests {
 
     #[tokio::test]
     async fn capture_window_unknown_id_errors() {
-        let vantage = Vantage::new(
+        let vantage = mk_vantage(
             Arc::new(MockWindows::default()),
             Arc::new(NoScreen),
             Arc::new(NoOcr),

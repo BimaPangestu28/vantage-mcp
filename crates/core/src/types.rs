@@ -70,6 +70,15 @@ pub struct DisplayInfo {
     pub is_primary: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MouseButton {
+    #[default]
+    Left,
+    Right,
+    Middle,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

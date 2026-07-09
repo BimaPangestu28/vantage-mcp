@@ -10,12 +10,16 @@
 use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
-use vantage_core::{ClipboardAccess, ScreenCapturer, TextRecognizer, WindowInspector};
+use vantage_core::{
+    ClipboardAccess, InputController, ScreenCapturer, TextRecognizer, WindowInspector,
+};
 
 #[cfg(target_os = "linux")]
 mod atspi_conn;
 #[cfg(target_os = "linux")]
 mod clipboard;
+#[cfg(target_os = "linux")]
+mod input;
 #[cfg(target_os = "linux")]
 mod windows;
 
@@ -38,6 +42,8 @@ pub use capture::LinuxScreenCapturer;
 #[cfg(target_os = "linux")]
 pub use clipboard::LinuxClipboard;
 #[cfg(target_os = "linux")]
+pub use input::LinuxInputController;
+#[cfg(target_os = "linux")]
 pub use ocr::LinuxTextRecognizer;
 #[cfg(target_os = "linux")]
 pub use windows::LinuxWindowInspector;
@@ -51,11 +57,13 @@ pub fn backends() -> (
     Arc<dyn ScreenCapturer>,
     Arc<dyn TextRecognizer>,
     Arc<dyn ClipboardAccess>,
+    Arc<dyn InputController>,
 ) {
     (
         Arc::new(LinuxWindowInspector::new()),
         Arc::new(LinuxScreenCapturer::new()),
         Arc::new(LinuxTextRecognizer::new()),
         Arc::new(LinuxClipboard::new()),
+        Arc::new(LinuxInputController::new()),
     )
 }
