@@ -61,15 +61,30 @@ impl InputController for LinuxInputController {
             Err(e) => Err(CaptureError::Internal(format!("clipboard thread: {e}"))),
         }
     }
-    fn type_text(&self, _text: &str) -> Result<(), CaptureError> {
-        Err(CaptureError::Unsupported(
-            "linux type_text not yet implemented".into(),
-        ))
+    fn type_text(&self, text: &str) -> Result<(), CaptureError> {
+        use enigo::{Enigo, Keyboard, Settings};
+        let mut enigo =
+            Enigo::new(&Settings::default()).map_err(|e| classify_input_error(&e.to_string()))?;
+        enigo
+            .text(text)
+            .map_err(|e| classify_input_error(&e.to_string()))
     }
-    fn click(&self, _x: i32, _y: i32, _button: MouseButton) -> Result<(), CaptureError> {
-        Err(CaptureError::Unsupported(
-            "linux click not yet implemented".into(),
-        ))
+
+    fn click(&self, x: i32, y: i32, button: MouseButton) -> Result<(), CaptureError> {
+        use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
+        let mut enigo =
+            Enigo::new(&Settings::default()).map_err(|e| classify_input_error(&e.to_string()))?;
+        enigo
+            .move_mouse(x, y, Coordinate::Abs)
+            .map_err(|e| classify_input_error(&e.to_string()))?;
+        let btn = match button {
+            MouseButton::Left => Button::Left,
+            MouseButton::Right => Button::Right,
+            MouseButton::Middle => Button::Middle,
+        };
+        enigo
+            .button(btn, Direction::Click)
+            .map_err(|e| classify_input_error(&e.to_string()))
     }
     fn focus_window(&self, target: &WindowInfo) -> Result<(), CaptureError> {
         let rt = self.rt.lock().expect("runtime mutex");
@@ -77,5 +92,22 @@ impl InputController for LinuxInputController {
             let conn = connect().await?;
             grab_focus_by_id(conn.connection(), target.window_id).await
         })
+    }
+}
+
+/// Map a synthetic-input failure to an actionable error. On Wayland, native
+/// input injection is compositor-restricted (enigo's default x11rb path only
+/// reaches X11/XWayland); surface that as `Unsupported` rather than a generic
+/// failure.
+fn classify_input_error(msg: &str) -> CaptureError {
+    let m = msg.to_lowercase();
+    if m.contains("wayland") || m.contains("libei") || m.contains("portal") || m.contains("display")
+    {
+        CaptureError::Unsupported(format!(
+            "synthetic input was refused ({msg}). On Wayland, input injection needs \
+             compositor/portal support (limited on GNOME); it works under X11/XWayland."
+        ))
+    } else {
+        CaptureError::Internal(format!("input: {msg}"))
     }
 }

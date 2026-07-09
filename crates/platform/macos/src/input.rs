@@ -22,15 +22,30 @@ impl InputController for MacInputController {
             .set_text(text.to_owned())
             .map_err(|e| CaptureError::Internal(format!("clipboard set_text: {e}")))
     }
-    fn type_text(&self, _text: &str) -> Result<(), CaptureError> {
-        Err(CaptureError::Unsupported(
-            "macos type_text not yet implemented".into(),
-        ))
+    fn type_text(&self, text: &str) -> Result<(), CaptureError> {
+        use enigo::{Enigo, Keyboard, Settings};
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| CaptureError::Internal(format!("input init: {e}")))?;
+        enigo
+            .text(text)
+            .map_err(|e| CaptureError::Internal(format!("input type: {e}")))
     }
-    fn click(&self, _x: i32, _y: i32, _button: MouseButton) -> Result<(), CaptureError> {
-        Err(CaptureError::Unsupported(
-            "macos click not yet implemented".into(),
-        ))
+
+    fn click(&self, x: i32, y: i32, button: MouseButton) -> Result<(), CaptureError> {
+        use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| CaptureError::Internal(format!("input init: {e}")))?;
+        enigo
+            .move_mouse(x, y, Coordinate::Abs)
+            .map_err(|e| CaptureError::Internal(format!("input move: {e}")))?;
+        let btn = match button {
+            MouseButton::Left => Button::Left,
+            MouseButton::Right => Button::Right,
+            MouseButton::Middle => Button::Middle,
+        };
+        enigo
+            .button(btn, Direction::Click)
+            .map_err(|e| CaptureError::Internal(format!("input click: {e}")))
     }
     fn focus_window(&self, target: &WindowInfo) -> Result<(), CaptureError> {
         // Resolve the window's owning app and activate it (brings the app and

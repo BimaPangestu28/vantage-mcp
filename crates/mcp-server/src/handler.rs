@@ -174,6 +174,21 @@ pub struct FocusWindowParams {
     pub window_id: u32,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TypeTextParams {
+    /// Text to type as synthetic keystrokes.
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ClickParams {
+    pub x: i32,
+    pub y: i32,
+    /// "left" (default), "right", or "middle".
+    #[serde(default)]
+    pub button: vantage_core::MouseButton,
+}
+
 /// The MCP server handler. Holds injected, platform-agnostic backends and the
 /// composed tool router. Read tools (`windows`/`capturer`/`ocr`/`clipboard`) are
 /// always mounted; the act tools (`input`) are mounted only when the act gate is
@@ -402,6 +417,37 @@ impl Vantage {
         .await
         .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
         .map_err(to_mcp_error)?;
+        Ok(Json(AckOutput { ok: true }))
+    }
+
+    /// Type text as synthetic keystrokes into the focused window. (Act tool.)
+    #[tool(description = "Type text as synthetic keystrokes.")]
+    pub async fn type_text(
+        &self,
+        Parameters(params): Parameters<TypeTextParams>,
+    ) -> Result<Json<AckOutput>, ErrorData> {
+        tracing::info!("act: type_text ({} chars)", params.text.len());
+        let input = self.input.clone();
+        tokio::task::spawn_blocking(move || input.type_text(&params.text))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+        Ok(Json(AckOutput { ok: true }))
+    }
+
+    /// Click the mouse at absolute screen coordinates. (Act tool.)
+    #[tool(description = "Click the mouse at (x, y).")]
+    pub async fn click(
+        &self,
+        Parameters(params): Parameters<ClickParams>,
+    ) -> Result<Json<AckOutput>, ErrorData> {
+        tracing::info!("act: click ({},{}) {:?}", params.x, params.y, params.button);
+        let input = self.input.clone();
+        let (x, y, button) = (params.x, params.y, params.button);
+        tokio::task::spawn_blocking(move || input.click(x, y, button))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
         Ok(Json(AckOutput { ok: true }))
     }
 }
@@ -960,5 +1006,64 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.message.contains("424242"));
+    }
+
+    #[tokio::test]
+    async fn type_text_and_click_forward_to_input() {
+        use std::sync::Mutex;
+        #[derive(Default)]
+        struct RecInput {
+            typed: Mutex<Option<String>>,
+            clicked: Mutex<Option<(i32, i32, vantage_core::MouseButton)>>,
+        }
+        impl InputController for RecInput {
+            fn write_clipboard(&self, _t: &str) -> Result<(), CaptureError> {
+                Ok(())
+            }
+            fn type_text(&self, t: &str) -> Result<(), CaptureError> {
+                *self.typed.lock().unwrap() = Some(t.to_owned());
+                Ok(())
+            }
+            fn click(
+                &self,
+                x: i32,
+                y: i32,
+                b: vantage_core::MouseButton,
+            ) -> Result<(), CaptureError> {
+                *self.clicked.lock().unwrap() = Some((x, y, b));
+                Ok(())
+            }
+            fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
+                Ok(())
+            }
+        }
+        let rec = Arc::new(RecInput::default());
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(NoScreen),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+            rec.clone(),
+            true,
+        );
+        vantage
+            .type_text(Parameters(TypeTextParams {
+                text: "hi there".into(),
+            }))
+            .await
+            .unwrap();
+        vantage
+            .click(Parameters(ClickParams {
+                x: 12,
+                y: 34,
+                button: vantage_core::MouseButton::Right,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(rec.typed.lock().unwrap().as_deref(), Some("hi there"));
+        assert_eq!(
+            *rec.clicked.lock().unwrap(),
+            Some((12, 34, vantage_core::MouseButton::Right))
+        );
     }
 }

@@ -28,3 +28,4 @@ accessibility-sys = "0.2"
 xcap = "0.9"
 image = { workspace = true }
 arboard = "3"
+enigo = "0.6"
