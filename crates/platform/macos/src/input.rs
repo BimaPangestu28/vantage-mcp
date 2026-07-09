@@ -15,10 +15,12 @@ impl Default for MacInputController {
 }
 
 impl InputController for MacInputController {
-    fn write_clipboard(&self, _text: &str) -> Result<(), CaptureError> {
-        Err(CaptureError::Unsupported(
-            "macos clipboard_write not yet implemented".into(),
-        ))
+    fn write_clipboard(&self, text: &str) -> Result<(), CaptureError> {
+        let mut board = arboard::Clipboard::new()
+            .map_err(|e| CaptureError::Internal(format!("clipboard open: {e}")))?;
+        board
+            .set_text(text.to_owned())
+            .map_err(|e| CaptureError::Internal(format!("clipboard set_text: {e}")))
     }
     fn type_text(&self, _text: &str) -> Result<(), CaptureError> {
         Err(CaptureError::Unsupported(

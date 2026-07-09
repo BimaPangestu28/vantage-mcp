@@ -156,6 +156,18 @@ pub struct ListDisplaysResult {
     pub displays: Vec<DisplayInfo>,
 }
 
+/// Shared success acknowledgement returned by the act tools.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AckOutput {
+    pub ok: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ClipboardWriteParams {
+    /// Text to place on the system clipboard.
+    pub text: String,
+}
+
 /// The MCP server handler. Holds injected, platform-agnostic backends and the
 /// composed tool router. Read tools (`windows`/`capturer`/`ocr`/`clipboard`) are
 /// always mounted; the act tools (`input`) are mounted only when the act gate is
@@ -342,10 +354,24 @@ impl Vantage {
     }
 }
 
-/// The act (mutating) tools — mounted only when the act gate is enabled. Tools
-/// are added here in later tasks; the empty block yields an empty router.
+/// The act (mutating) tools — mounted only when the act gate is enabled.
 #[tool_router(router = act_tool_router)]
-impl Vantage {}
+impl Vantage {
+    /// Write text to the system clipboard. (Act tool — requires the act gate.)
+    #[tool(description = "Write text to the system clipboard.")]
+    pub async fn clipboard_write(
+        &self,
+        Parameters(params): Parameters<ClipboardWriteParams>,
+    ) -> Result<Json<AckOutput>, ErrorData> {
+        tracing::info!("act: clipboard_write ({} chars)", params.text.len());
+        let input = self.input.clone();
+        tokio::task::spawn_blocking(move || input.write_clipboard(&params.text))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
+            .map_err(to_mcp_error)?;
+        Ok(Json(AckOutput { ok: true }))
+    }
+}
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for Vantage {
@@ -817,5 +843,76 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.message.contains("999"));
+    }
+
+    fn vantage_gated(allow_act: bool) -> Vantage {
+        Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(NoScreen),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+            Arc::new(NoInput),
+            allow_act,
+        )
+    }
+
+    #[test]
+    fn act_tools_absent_when_gate_off_present_when_on() {
+        let off = vantage_gated(false);
+        assert!(
+            !off.tool_router.has_route("clipboard_write"),
+            "act tool must be unmounted when the gate is off"
+        );
+        // Read tools are always mounted.
+        assert!(off.tool_router.has_route("list_windows"));
+
+        let on = vantage_gated(true);
+        assert!(
+            on.tool_router.has_route("clipboard_write"),
+            "act tool must be mounted when the gate is on"
+        );
+    }
+
+    #[tokio::test]
+    async fn clipboard_write_forwards_to_input() {
+        use std::sync::Mutex;
+        struct RecInput(Mutex<Option<String>>);
+        impl InputController for RecInput {
+            fn write_clipboard(&self, t: &str) -> Result<(), CaptureError> {
+                *self.0.lock().unwrap() = Some(t.to_owned());
+                Ok(())
+            }
+            fn type_text(&self, _t: &str) -> Result<(), CaptureError> {
+                Ok(())
+            }
+            fn click(
+                &self,
+                _x: i32,
+                _y: i32,
+                _b: vantage_core::MouseButton,
+            ) -> Result<(), CaptureError> {
+                Ok(())
+            }
+            fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
+                Ok(())
+            }
+        }
+        let rec = Arc::new(RecInput(Mutex::new(None)));
+        let vantage = Vantage::new(
+            Arc::new(MockWindows::default()),
+            Arc::new(NoScreen),
+            Arc::new(NoOcr),
+            Arc::new(NoClip),
+            rec.clone(),
+            true,
+        );
+        let out = vantage
+            .clipboard_write(Parameters(ClipboardWriteParams {
+                text: "hello".into(),
+            }))
+            .await
+            .unwrap();
+        assert!(out.0.ok);
+        assert_eq!(rec.0.lock().unwrap().as_deref(), Some("hello"));
     }
 }
