@@ -39,7 +39,8 @@ Toolchain is pinned to Rust **1.95** via `rust-toolchain.toml`.
 
 ## Architecture
 
-Four-crate Cargo workspace with a strict dependency direction —
+Five-crate Cargo workspace (the fifth, `crates/agent`, is a standalone client —
+see below). Server side has a strict dependency direction —
 `core ← platform/{macos,linux} ← mcp-server`:
 
 - **`crates/core`** (`vantage_core`) — platform-agnostic contract. Defines the
@@ -89,6 +90,15 @@ Four-crate Cargo workspace with a strict dependency direction —
   `backend::backends()` — it never names a concrete `Mac*`/`Linux*` type. The
   server forwards `capture`/`ocr` features to the Linux crate, so
   `--no-default-features` yields a server buildable without GUI/OCR system libs.
+
+- **`crates/agent`** (bin `vantage-agent`, lib `vantage_agent`) — a standalone
+  **client**, not part of the server dependency chain: it talks MCP to the built
+  `vantage-mcp` binary and uses **DeepSeek** (`deepseek-chat`, OpenAI-compatible)
+  for the tool-calling loop. `mcp.rs` (spawn server via rmcp `TokioChildProcess`,
+  list→OpenAI schemas, call→sanitized JSON with base64 images stripped),
+  `deepseek.rs` (reqwest/rustls chat client), `agent.rs` (loop + act-tool
+  confirmation), `main.rs` (one-shot/REPL). Act tools require `--allow-act`
+  (forwards `VANTAGE_ALLOW_ACT=1`) **and** per-call confirmation.
 
 **Key design invariants** (violate these and you break the point of the project):
 
