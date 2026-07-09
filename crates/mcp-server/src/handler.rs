@@ -386,7 +386,7 @@ impl Vantage {
     ) -> Result<Json<AckOutput>, ErrorData> {
         tracing::info!("act: clipboard_write ({} chars)", params.text.len());
         let input = self.input.clone();
-        tokio::task::spawn_blocking(move || input.write_clipboard(&params.text))
+        tokio::task::spawn_blocking(move || input.write_clipboard(Some(&params.text), None))
             .await
             .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
             .map_err(to_mcp_error)?;
@@ -444,7 +444,7 @@ impl Vantage {
         tracing::info!("act: click ({},{}) {:?}", params.x, params.y, params.button);
         let input = self.input.clone();
         let (x, y, button) = (params.x, params.y, params.button);
-        tokio::task::spawn_blocking(move || input.click(x, y, button))
+        tokio::task::spawn_blocking(move || input.click(x, y, button, false))
             .await
             .map_err(|e| ErrorData::internal_error(format!("task join error: {e}"), None))?
             .map_err(to_mcp_error)?;
@@ -527,7 +527,11 @@ mod tests {
 
     pub(crate) struct NoInput;
     impl InputController for NoInput {
-        fn write_clipboard(&self, _t: &str) -> Result<(), CaptureError> {
+        fn write_clipboard(
+            &self,
+            _t: Option<&str>,
+            _i: Option<&vantage_core::RgbaImage>,
+        ) -> Result<(), CaptureError> {
             Err(CaptureError::Unsupported("mock".into()))
         }
         fn type_text(&self, _t: &str) -> Result<(), CaptureError> {
@@ -538,10 +542,17 @@ mod tests {
             _x: i32,
             _y: i32,
             _b: vantage_core::MouseButton,
+            _d: bool,
         ) -> Result<(), CaptureError> {
             Err(CaptureError::Unsupported("mock".into()))
         }
         fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn move_mouse(&self, _x: i32, _y: i32) -> Result<(), CaptureError> {
+            Err(CaptureError::Unsupported("mock".into()))
+        }
+        fn key_press(&self, _k: &str) -> Result<(), CaptureError> {
             Err(CaptureError::Unsupported("mock".into()))
         }
     }
@@ -950,8 +961,12 @@ mod tests {
         use std::sync::Mutex;
         struct RecInput(Mutex<Option<String>>);
         impl InputController for RecInput {
-            fn write_clipboard(&self, t: &str) -> Result<(), CaptureError> {
-                *self.0.lock().unwrap() = Some(t.to_owned());
+            fn write_clipboard(
+                &self,
+                t: Option<&str>,
+                _i: Option<&vantage_core::RgbaImage>,
+            ) -> Result<(), CaptureError> {
+                *self.0.lock().unwrap() = t.map(|s| s.to_owned());
                 Ok(())
             }
             fn type_text(&self, _t: &str) -> Result<(), CaptureError> {
@@ -962,10 +977,17 @@ mod tests {
                 _x: i32,
                 _y: i32,
                 _b: vantage_core::MouseButton,
+                _d: bool,
             ) -> Result<(), CaptureError> {
                 Ok(())
             }
             fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
+                Ok(())
+            }
+            fn move_mouse(&self, _x: i32, _y: i32) -> Result<(), CaptureError> {
+                Ok(())
+            }
+            fn key_press(&self, _k: &str) -> Result<(), CaptureError> {
                 Ok(())
             }
         }
@@ -1007,10 +1029,16 @@ mod tests {
         #[derive(Default)]
         struct RecInput {
             typed: Mutex<Option<String>>,
-            clicked: Mutex<Option<(i32, i32, vantage_core::MouseButton)>>,
+            clicked: Mutex<Option<(i32, i32, vantage_core::MouseButton, bool)>>,
+            moved: Mutex<Option<(i32, i32)>>,
+            pressed: Mutex<Option<String>>,
         }
         impl InputController for RecInput {
-            fn write_clipboard(&self, _t: &str) -> Result<(), CaptureError> {
+            fn write_clipboard(
+                &self,
+                _t: Option<&str>,
+                _i: Option<&vantage_core::RgbaImage>,
+            ) -> Result<(), CaptureError> {
                 Ok(())
             }
             fn type_text(&self, t: &str) -> Result<(), CaptureError> {
@@ -1022,8 +1050,17 @@ mod tests {
                 x: i32,
                 y: i32,
                 b: vantage_core::MouseButton,
+                d: bool,
             ) -> Result<(), CaptureError> {
-                *self.clicked.lock().unwrap() = Some((x, y, b));
+                *self.clicked.lock().unwrap() = Some((x, y, b, d));
+                Ok(())
+            }
+            fn move_mouse(&self, x: i32, y: i32) -> Result<(), CaptureError> {
+                *self.moved.lock().unwrap() = Some((x, y));
+                Ok(())
+            }
+            fn key_press(&self, k: &str) -> Result<(), CaptureError> {
+                *self.pressed.lock().unwrap() = Some(k.to_owned());
                 Ok(())
             }
             fn focus_window(&self, _t: &WindowInfo) -> Result<(), CaptureError> {
@@ -1056,7 +1093,7 @@ mod tests {
         assert_eq!(rec.typed.lock().unwrap().as_deref(), Some("hi there"));
         assert_eq!(
             *rec.clicked.lock().unwrap(),
-            Some((12, 34, vantage_core::MouseButton::Right))
+            Some((12, 34, vantage_core::MouseButton::Right, false))
         );
     }
 }
